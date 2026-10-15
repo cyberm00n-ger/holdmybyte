@@ -16,6 +16,12 @@ public enum DemoSupport {
         FixtureEngine(.init(estimateDuration: .milliseconds(600), secondsPerPhoto: secondsPerPhoto))
     }
 
+    /// Demo mode keeps everything in memory: the real history and settings are never touched. Starts with the
+    /// fixture history (38 weddings) so the sidebar, search and Done views can be tried at once.
+    public static func history() -> any HistoryStoring { InMemoryHistory(Fixtures.history) }
+    public static func presets() -> any PresetStoring { InMemoryPresets() }
+    public static func settings() -> any SettingsStoring { InMemorySettings() }
+
     /// Synthetic thumbnails (or `HMB_FIXTURE_PHOTOS`).
     public static func thumbnails() -> any ThumbnailProviding { FixtureThumbnails() }
 }

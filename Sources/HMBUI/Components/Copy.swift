@@ -32,10 +32,17 @@ public enum Copy {
         return m == 0 ? "about \(h) h" : "about \(h) h \(m) min"
     }
 
+    /// The UI is English (§2.5): dates use English words with the region's conventions ("12 Jul" in en_DE),
+    /// also on a Mac whose language is German.
+    public static func uiLocale(_ locale: Locale) -> Locale {
+        if locale.language.languageCode == .english { return locale }
+        return Locale(languageCode: .english, languageRegion: locale.region)
+    }
+
     /// "Jul 12" (en_US), with an explicit time zone so tests and snapshots are stable.
     public static func shortDate(_ date: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
         var style = Date.FormatStyle.dateTime.month(.abbreviated).day()
-        style.locale = locale
+        style.locale = uiLocale(locale)
         style.timeZone = timeZone
         return date.formatted(style)
     }
@@ -43,7 +50,7 @@ public enum Copy {
     /// "July 12, 2026" (en_US).
     public static func longDate(_ date: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
         var style = Date.FormatStyle.dateTime.month(.wide).day().year()
-        style.locale = locale
+        style.locale = uiLocale(locale)
         style.timeZone = timeZone
         return date.formatted(style)
     }
@@ -51,7 +58,7 @@ public enum Copy {
     /// "July 2026" (sidebar section titles).
     public static func monthYear(_ date: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
         var style = Date.FormatStyle.dateTime.month(.wide).year()
-        style.locale = locale
+        style.locale = uiLocale(locale)
         style.timeZone = timeZone
         return date.formatted(style)
     }

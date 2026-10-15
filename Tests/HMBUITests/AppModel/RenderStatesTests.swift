@@ -54,13 +54,17 @@ import Testing
             .environment(\.isSnapshotRendering, true)
             .environment(\.locale, locale))
         let frame = NSRect(origin: .zero, size: id == "menubar-extra" ? CGSize(width: 300, height: 200) : size)
-        let window = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+        let window = OffscreenWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: appearance)
         window.contentView = hosting
         window.setContentSize(frame.size)
         if ProcessInfo.processInfo.environment["HMB_WP3_RENDER_ORDER"] == "1" {
-            window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
+            // On screen for the window server, but below the desktop window and click-through: invisible to the
+            // person using the Mac, never under their pointer.
+            window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+            window.ignoresMouseEvents = true
+            window.setFrameOrigin(NSPoint(x: 0, y: 0))
             window.orderFrontRegardless()
         }
         defer { window.orderOut(nil) }

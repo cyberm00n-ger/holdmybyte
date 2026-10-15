@@ -6,6 +6,8 @@ import SwiftUI
 struct DoneView: View {
     let record: WeddingRecord
     @Environment(AppModel.self) private var model
+    /// The scroll view's width (the viewport, independent of the content), for the proof card's layout.
+    @State private var viewportWidth: CGFloat = Tokens.Layout.windowDefault.width - 260
 
     var body: some View {
         let presentation = WeddingPresentation(record)
@@ -17,7 +19,10 @@ struct DoneView: View {
                     if presentation.issuePhotoCount > 0 { IssuesCard(record: record, presentation: presentation) }
                     if missing { MissingFolderBanner(record: record) }
                     DeliveryTiles(record: record, presentation: presentation, folderMissing: missing)
-                    ProofCard(record: record, presentation: presentation, folderMissing: missing)
+                    // Wide: text and histogram side by side (card content ≥ 420 + 24 + 300).
+                    ProofCard(record: record, presentation: presentation, folderMissing: missing,
+                              wide: min(viewportWidth - 2 * Tokens.Spacing.s32, Tokens.Layout.doneHeaderMaxWidth)
+                                  - 2 * Tokens.Layout.tilePadding >= 744)
                 }
                 .frame(maxWidth: Tokens.Layout.doneHeaderMaxWidth, alignment: .leading)
                 GridHeader(record: record, presentation: presentation)
@@ -27,6 +32,7 @@ struct DoneView: View {
             .padding(.horizontal, Tokens.Spacing.s32)
             .padding(.vertical, Tokens.Spacing.s24)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewportWidth = $0 }
         .toolbar { DoneToolbar(record: record) }
     }
 }
@@ -325,11 +331,11 @@ struct ProofCard: View {
     let record: WeddingRecord
     let presentation: WeddingPresentation
     let folderMissing: Bool
+    var wide = true
     @Environment(AppModel.self) private var model
     @Environment(\.locale) private var locale
     @State private var chosen: DeliveryID?
     @State private var showsExplainer = false
-    @State private var wide = true
 
     var body: some View {
         let lossy = presentation.lossyDeliveries
@@ -345,7 +351,6 @@ struct ProofCard: View {
                     .labelStyle(TintedIconLabelStyle())
             }
         }
-        .onGeometryChange(for: Bool.self) { $0.size.width >= 700 } action: { wide = $0 }
         .cardSurface()
     }
 
@@ -368,6 +373,7 @@ struct ProofCard: View {
                 }
             }
             Text(Copy.Done.lowestFive).font(.subheadline.weight(.semibold))
+            ScrollView(.horizontal) {
             HStack(spacing: Tokens.Spacing.s8) {
                 ForEach(presentation.lowest(5, delivery: delivery), id: \.photo.id) { item in
                     Button {
@@ -380,6 +386,9 @@ struct ProofCard: View {
                     .help(item.photo.relativePath)
                 }
             }
+            }
+            .scrollIndicators(.never)
+            .scrollClipDisabled()
         }
     }
 

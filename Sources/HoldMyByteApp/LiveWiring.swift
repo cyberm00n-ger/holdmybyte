@@ -12,25 +12,23 @@ import HMBUI
 
 extension AppModel {
     @MainActor static func live() -> AppModel {
+        if DemoSupport.isEnabled {
+            return AppModel(state: AppState(), engine: DemoSupport.engine(), history: DemoSupport.history(),
+                            presetsStore: DemoSupport.presets(), settingsStore: DemoSupport.settings(),
+                            thumbnails: DemoSupport.thumbnails())
+        }
         let support = LiveEngine.defaultSupportDirectory
         let engine: any EngineService
-        let thumbnails: any ThumbnailProviding
-        if DemoSupport.isEnabled {
-            engine = DemoSupport.engine()
-            thumbnails = DemoSupport.thumbnails()
-        } else {
-            do {
-                engine = try LiveEngine(supportDirectory: support)
-            } catch {
-                engine = UnavailableEngine(reason: String(describing: error))
-            }
-            thumbnails = InterimThumbnails()                                            // WP4: DiskThumbnailCache
+        do {
+            engine = try LiveEngine(supportDirectory: support)
+        } catch {
+            engine = UnavailableEngine(reason: String(describing: error))
         }
-        let history = InterimHistoryStore(directory: support.appending(path: "Weddings", directoryHint: .isDirectory)) // WP4
+        let history = InterimHistoryStore(directory: support.appending(path: "Weddings", directoryHint: .isDirectory)) // WP4: JSONHistoryStore
         return AppModel(state: AppState(), engine: engine, history: history,
                         presetsStore: InterimPresetStore(),                             // WP4: UserDefaultsPresetStore
                         settingsStore: InterimSettingsStore(),                          // WP4: UserDefaultsSettingsStore
-                        thumbnails: thumbnails)
+                        thumbnails: InterimThumbnails())                                // WP4: DiskThumbnailCache
     }
 }
 

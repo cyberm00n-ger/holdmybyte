@@ -340,8 +340,8 @@ struct SetupBottomBar: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .contentTransition(.numericText())
                 Spacer(minLength: Tokens.Spacing.s8)
                 Button(Copy.Setup.cancel) { model.cancelSetup() }

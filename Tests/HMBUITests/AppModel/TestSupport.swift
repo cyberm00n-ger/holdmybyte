@@ -1,4 +1,5 @@
 // Helpers for the WP3 intent tests: a spy around FixtureEngine, small scans, polling.
+import AppKit
 import Foundation
 import HMBFixtures
 import HMBModel
@@ -152,3 +153,8 @@ func waitUntil(_ what: String, timeout: Double = 10, _ condition: @MainActor () 
     }
 }
 
+
+/// Never constrained onto a screen: ordered in at (−20000, −20000), it stays invisible to whoever uses the Mac.
+final class OffscreenWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}

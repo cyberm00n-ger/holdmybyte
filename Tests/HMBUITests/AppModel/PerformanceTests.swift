@@ -47,11 +47,12 @@ import Testing
     static func window(_ model: AppModel, size: CGSize = Tokens.Layout.windowDefault) -> (NSWindow, NSHostingView<AnyView>) {
         _ = NSApplication.shared
         let hosting = NSHostingView(rootView: AnyView(RootView(model: model).environment(\.isSnapshotRendering, true)))
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+        let window = OffscreenWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.contentView = hosting
         window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
         window.orderFrontRegardless()
+        precondition(window.frame.origin.x < -10_000, "the perf window must stay off screen")
         return (window, hosting)
     }
 

@@ -721,6 +721,8 @@ public final class AppModel {
                 state.queue.insert(target, at: 0)
                 updateQueuePositions()
             }
+        case .queued:
+            break           // re-queued (Try Again, Create More) between the final phase and the end of the stream
         default:
             state.queue.removeAll { $0 == id }
             updateQueuePositions()
@@ -855,7 +857,7 @@ public final class AppModel {
 
     /// Try Again (issues) for `photos` (nil: every retryable failure), or the whole job of a failed wedding.
     public func retry(_ id: WeddingID, photos: [PhotoID]?) {
-        guard let record = record(id), runTasks[id] == nil else { return }
+        guard let record = record(id), record.phase == .finished || Self.isFailed(record.phase) else { return }
         if Self.isFailed(record.phase) {
             requests[id] = nil
             if let i = index(id) {

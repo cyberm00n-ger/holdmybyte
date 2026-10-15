@@ -83,9 +83,10 @@ struct StatusBanner<Actions: View>: View {
                 .foregroundStyle(symbolStyle)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.body.weight(.semibold))
-                Text(message).font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Bounded line counts: the window's minimum size is measured at the narrowest detail width, so a
+                // banner must never demand unbounded height.
+                Text(title).font(.body.weight(.semibold)).lineLimit(2)
+                Text(message).font(.callout).foregroundStyle(.secondary).lineLimit(3)
             }
             Spacer(minLength: Tokens.Spacing.s8)
             HStack(spacing: Tokens.Spacing.s8) { actions() }

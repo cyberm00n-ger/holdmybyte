@@ -19,6 +19,7 @@ public struct RootView: View {
                 DetailRouter()
                     .navigationDestination(for: CompareRoute.self) { _ in CompareView(model: model) }
             }
+            .navigationSplitViewColumnWidth(min: Tokens.Layout.windowMinimum.width - 260, ideal: 860)
         }
         .searchable(text: model.searchBinding, placement: .sidebar, prompt: Text(Copy.Sidebar.searchPrompt))
         .searchFocused($searchFocused)
