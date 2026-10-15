@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let dock = dock, notifications = notifications
         platform.dock = { progress, badge in dock.update(progress: progress, badge: badge) }
         platform.post = { event in notifications.post(event) }
+        // Demo mode's fixture weddings live at made-up paths: treat their folders as present, or every one would
+        // show "The delivery folder has moved or was deleted."
+        if DemoSupport.isEnabled { platform.fileExists = { _ in true } }
         model.platform = platform
         notifications.onAction = { [weak self] action, wedding in self?.handleNotification(action, wedding: wedding) }
     }

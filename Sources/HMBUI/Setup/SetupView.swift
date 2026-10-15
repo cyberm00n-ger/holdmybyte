@@ -11,6 +11,14 @@ struct SetupView: View {
         VStack(spacing: 0) {
             Form {
                 Section { SetupHeader(draft: draft, editable: true) }
+                // Notices sit right under the header (the spec lists them last): a block or a warning must be visible
+                // without scrolling, also at the 780 × 560 minimum (Docs/DECISIONS.md).
+                let notices = model.draftNotices
+                if !notices.isEmpty {
+                    Section {
+                        ForEach(notices, id: \.self) { NoticeRow(notice: $0, draft: draft) }
+                    }
+                }
                 Section {
                     ForEach(model.draftPresets) { preset in
                         DeliveryRow(preset: preset, draft: draft)
@@ -25,12 +33,6 @@ struct SetupView: View {
                 Section(Copy.Setup.saveTo) {
                     LocationRow(draft: draft)
                     RenameRow(draft: draft)
-                }
-                let notices = model.draftNotices
-                if !notices.isEmpty {
-                    Section {
-                        ForEach(notices, id: \.self) { NoticeRow(notice: $0, draft: draft) }
-                    }
                 }
             }
             .formStyle(.grouped)
@@ -213,6 +215,7 @@ struct LocationRow: View {
                         .truncationMode(.middle)
                         .help(model.draftOutputFolder?.path ?? "")
                     Button(Copy.Setup.change) { model.chooseOutputFolder() }
+                        .hmbNeutralButtonTint()
                         .disabled(draft.existingWedding != nil)
                 }
             }
@@ -306,12 +309,16 @@ struct NoticeRow: View {
         case .alreadyCompressed:
             HStack(spacing: 6) {
                 Button(Copy.Notice.useArchiveOnly) { model.useArchiveOnly(notice) }
+                    .hmbNeutralButtonTint()
                 Button(Copy.Notice.continueAnyway) { model.acknowledge(notice) }
+                    .hmbNeutralButtonTint()
             }
         case .holdMyByteOutput:
             Button(Copy.Notice.continueAnyway) { model.acknowledge(notice) }
+                .hmbNeutralButtonTint()
         case .notEnoughSpace, .notWritable, .outputInsideSource:
             Button(Copy.Notice.chooseAnotherLocation) { model.chooseOutputFolder() }
+                .hmbNeutralButtonTint()
                 .disabled(draft.existingWedding != nil)
         default:
             EmptyView()
@@ -331,6 +338,7 @@ struct SetupBottomBar: View {
     let draft: SetupDraft
     @Environment(AppModel.self) private var model
     @Environment(\.locale) private var locale
+    @Environment(\.isSnapshotRendering) private var isSnapshotRendering
 
     var body: some View {
         VStack(spacing: 0) {
@@ -347,6 +355,7 @@ struct SetupBottomBar: View {
                 Button(Copy.Setup.cancel) { model.cancelSetup() }
                     .keyboardShortcut(.cancelAction)
                     .controlSize(.large)
+                    .hmbNeutralButtonTint()
                 Button(primaryTitle) { model.startDraft() }
                     .hmbGlassButtonStyle(prominent: true)
                     .controlSize(.large)
@@ -357,7 +366,8 @@ struct SetupBottomBar: View {
             .padding(.horizontal, Tokens.Spacing.s20)
             .frame(height: Tokens.Layout.bottomBarHeight)
         }
-        .background(.bar)
+        // `.bar` is a backdrop material, which offscreen rendering cannot show: the form would show through.
+        .background(isSnapshotRendering ? AnyShapeStyle(.windowBackground) : AnyShapeStyle(.bar))
     }
 
     private var summary: String {

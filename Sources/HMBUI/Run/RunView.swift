@@ -85,7 +85,9 @@ struct RunHeader: View {
             }
             ProgressView(value: progress.fraction)
                 .progressViewStyle(.linear)
-                .tint(running ? nil : Color.secondary)
+                // Paused/stopped/interrupted: `.secondary`. Never `.tint(nil)`, which resets to the system accent
+                // instead of keeping the app's tint.
+                .modifier(SecondaryTint(active: !running))
                 .accessibilityLabel(Copy.Run.title(record.name))
                 .accessibilityValue("\(Int((progress.fraction * 100).rounded())) percent")
         }
@@ -114,22 +116,28 @@ struct RunBanner: View {
             let text = Copy.Banner.paused(reason, done: progress.photosDone, total: progress.photosTotal, locale: locale)
             StatusBanner(symbol: symbol(reason), symbolStyle: style(reason), title: text.title, message: text.message) {
                 Button(Copy.Banner.resume) { model.resume(record.id) }
+                    .hmbNeutralButtonTint()
                     .disabled(!model.canResume(record))
                 if reason != .user {
                     Button(Copy.Banner.stop) { model.requestStop(record.id) }
+                        .hmbNeutralButtonTint()
                 }
             }
         case .stopped:
             let text = Copy.Banner.stopped(done: progress.photosDone, total: progress.photosTotal, locale: locale)
             StatusBanner(symbol: "stop.circle.fill", title: text.title, message: text.message) {
                 Button(Copy.Banner.resume) { model.resume(record.id) }
+                    .hmbNeutralButtonTint()
                 Button(Copy.Banner.showInFinder) { model.revealInFinder(record.id, delivery: nil) }
+                    .hmbNeutralButtonTint()
             }
         case .interrupted:
             let text = Copy.Banner.interrupted(done: progress.photosDone, total: progress.photosTotal, locale: locale)
             StatusBanner(symbol: "arrow.clockwise.circle.fill", title: text.title, message: text.message) {
                 Button(Copy.Banner.resume) { model.resume(record.id) }
+                    .hmbNeutralButtonTint()
                 Button(Copy.Banner.stopHere) { model.stopHere(record.id) }
+                    .hmbNeutralButtonTint()
             }
         default:
             EmptyView()
@@ -194,5 +202,13 @@ struct DeliveryStrip: View {
             }
         }
         .scrollIndicators(.never)
+    }
+}
+
+/// `.tint(.secondary)` when `active`; otherwise the inherited tint stays.
+struct SecondaryTint: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        if active { content.tint(.secondary) } else { content }
     }
 }

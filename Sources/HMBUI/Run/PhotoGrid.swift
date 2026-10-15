@@ -64,7 +64,7 @@ struct PhotoCell: View, Equatable {
         let colour = cell.status == .done || cell.status == .keptOriginal || cell.status == .failed
         Color.clear
             .aspectRatio(1, contentMode: .fit)
-            .overlay { ThumbnailView(photo: cell.photo) }
+            .overlay { ThumbnailView(photo: cell.photo, monochrome: !colour) }
             .saturation(colour ? 1 : 0)
             .opacity(opacity)
             .animation(reduceMotion ? nil : Tokens.Motion.photoDone, value: colour)

@@ -48,7 +48,14 @@ final class SnapshotRenderer {
                              history: InMemoryHistory(scenario.state.records),
                              presetsStore: InMemoryPresets(presets: scenario.state.presets, defaultOn: scenario.state.defaultOn),
                              settingsStore: InMemorySettings(scenario.state.settings), thumbnails: thumbnails)
+        // The inert platform says every path exists; S12 needs its delivery folder gone.
+        var platform = AppPlatform.inert
+        let missing = scenario.missingFolders
+        platform.fileExists = { !missing.contains($0) }
+        model.platform = platform
+        model.volumesChanged()
         let appearance = request.appearance.nsAppearance
+        preloadComparePair(model: model)
         switch request.entry.surface {
         case .window:
             return try renderWindow(hosted(RootView(model: model), model: model), size: request.size, appearance: appearance)
@@ -57,8 +64,25 @@ final class SnapshotRenderer {
         case .menuBar:
             return try renderMenuBar(model: model, appearance: appearance)
         case .alert(let alert):
-            return try renderAlert(AlertCopy.copy(for: alert, in: scenario.state), appearance: appearance)
+            return try renderAlert(HarnessAlert.copy(for: alert, in: scenario.state, locale: locale), appearance: appearance)
         }
+    }
+
+    /// Compare loads its pair asynchronously; a snapshot needs it in the first frame. The pair comes from the
+    /// scenario's FixtureEngine (honouring an unavailable original) and is registered with `CompareView.preload`.
+    private func preloadComparePair(model: AppModel) {
+        guard let compare = model.state.compare, let record = model.compareRecord, let photo = compare.currentPhoto else { return }
+        let engine = model.engine
+        let delivery = compare.route.delivery
+        var pair: ComparePair?
+        var done = false
+        Task { @MainActor in
+            pair = try? await engine.comparePair(record: record, photo: photo, delivery: delivery, maxPixelSize: 2400)
+            done = true
+        }
+        let deadline = Date().addingTimeInterval(10)
+        while !done, Date() < deadline { RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01)) }
+        if let pair { CompareView.preload(pair, wedding: record.id, photo: photo, delivery: delivery) }
     }
 
     /// The environment every hosted view gets: the model (also for `@Environment(AppModel.self)` readers), snapshot
@@ -115,7 +139,7 @@ final class SnapshotRenderer {
     private func renderMenuBar(model: AppModel, appearance: NSAppearance) throws -> RenderedImage {
         let before = Set(NSApp.windows.map(ObjectIdentifier.init))
         let window = OffscreenCapture.panel(minWidth: 260, appearance: appearance,
-                                            content: hosted(StatusMenu(model: model).padding(.vertical, 5), model: model))
+                                            content: hosted(Self.menuLike(StatusMenu(model: model)), model: model))
         defer { close(window, keeping: before) }
         OffscreenCapture.settle(settleSeconds)
         guard let content = window.contentView,
@@ -150,6 +174,18 @@ final class SnapshotRenderer {
     }
 
     // MARK: Helpers
+
+    /// `StatusMenu`'s items laid out like an NSMenu (the real menu is drawn by AppKit, which needs the window
+    /// server): leading-aligned rows, borderless items in the label colour, 14 pt row insets.
+    private static func menuLike<Content: View>(_ content: Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) { content }
+            .buttonStyle(.borderless)
+            .tint(.primary)
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .frame(minWidth: 260, alignment: .leading)
+    }
 
     private func close(_ window: NSWindow, keeping before: Set<ObjectIdentifier>) {
         for other in NSApp.windows where !before.contains(ObjectIdentifier(other)) && other !== window { other.close() }

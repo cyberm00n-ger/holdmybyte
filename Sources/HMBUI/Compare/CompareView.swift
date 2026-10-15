@@ -51,6 +51,8 @@ public struct CompareView: View {
                 Tokens.Palette.compareSurround.ignoresSafeArea()
             }
         }
+        // The Back button already carries the wedding name (§2.2); the inherited title would repeat it.
+        .toolbar(removing: .title)
         .onAppear {
             if let route, model.state.compare?.route.wedding != route.wedding || model.state.compare == nil {
                 model.openCompare(route)

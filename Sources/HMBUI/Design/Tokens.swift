@@ -17,6 +17,9 @@ public enum Tokens {
         public static let failure = Color.red
         /// Info symbols.
         public static let info = HierarchicalShapeStyle.secondary
+        /// Compare split divider (§2.4 S14): a white line with a dark 0.5 pt shadow, over any photo, in both appearances.
+        public static let compareDivider = Color.white
+        public static let compareDividerShadow = Color.black.opacity(0.6)
 
         static func adaptive(light: UInt32, dark: UInt32, name: String) -> Color {
             Color(nsColor: NSColor(name: NSColor.Name("hmb." + name)) { appearance in
@@ -28,7 +31,12 @@ public enum Tokens {
 
     /// True when the user's system accent is Multicolor (`AppleAccentColor` unset); then the app tints with
     /// `Palette.accentMulticolor`, otherwise with the system accent.
-    public static var usesMulticolorAccent: Bool { UserDefaults.standard.object(forKey: "AppleAccentColor") == nil }
+    public static var usesMulticolorAccent: Bool {
+        forcesMulticolorAccent || UserDefaults.standard.object(forKey: "AppleAccentColor") == nil
+    }
+
+    /// Set once at launch by the snapshot harness, so snapshots show the shipped teal accent whoever renders them.
+    nonisolated(unsafe) public static var forcesMulticolorAccent = false
 
     // MARK: Spacing (4 pt grid)
 

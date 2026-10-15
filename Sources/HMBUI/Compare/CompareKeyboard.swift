@@ -9,6 +9,7 @@ import HMBModel
 @MainActor final class CompareKeyboard {
     private var monitor: Any?
     private var resignObserver: (any NSObjectProtocol)?
+    private var becomeKeyObserver: (any NSObjectProtocol)?
     private var originalPress: (keyCode: UInt16, started: Bool, at: ContinuousClock.Instant)?
 
     static let backslashKeyCode: UInt16 = 42
@@ -33,18 +34,31 @@ import HMBModel
                                                                 queue: .main) { [weak self, weak model] note in
             nonisolated(unsafe) let window = note.object as AnyObject?
             MainActor.assumeIsolated {
-                guard let self, let model, self.originalPress != nil, window === proxy.window else { return }
+                guard let model, window === proxy.window else { return }
+                model.compareWindowIsKey = false
+                guard let self, self.originalPress != nil else { return }
                 self.originalPress = nil
                 model.compareOriginalHoldInterrupted()
             }
         }
+        becomeKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil,
+                                                                   queue: .main) { [weak model] note in
+            nonisolated(unsafe) let window = note.object as AnyObject?
+            MainActor.assumeIsolated {
+                guard let model, window === proxy.window else { return }
+                model.compareWindowIsKey = true
+            }
+        }
+        model.compareWindowIsKey = proxy.window?.isKeyWindow ?? true
     }
 
     func remove() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        if let becomeKeyObserver { NotificationCenter.default.removeObserver(becomeKeyObserver) }
         monitor = nil
         resignObserver = nil
+        becomeKeyObserver = nil
         originalPress = nil
     }
 

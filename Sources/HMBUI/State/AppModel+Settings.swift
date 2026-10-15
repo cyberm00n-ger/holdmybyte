@@ -33,6 +33,7 @@ extension AppModel {
         }
         if case .editDelivery(let shown, _) = state.sheet, shown.id == preset.id { state.sheet = nil }
         persistPresets()
+        draftPresetChanged(preset.id)
     }
 
     /// Deletes a custom preset (built-ins cannot be deleted) from the list, the default set and an open setup.
@@ -89,10 +90,8 @@ extension AppModel {
         if let compare = state.compare, gone.contains(compare.route.wedding) { closeCompare() }
         state.detailPath.removeAll { gone.contains($0.wedding) }
         if state.alert == .clearHistory { state.alert = nil }
-        let history = history
-        Task {
-            for id in removed { try? await history.remove(id) }
-        }
+        forgetRemoved(gone)
+        removeFromStore(removed)                              // through the save chain: quit waits for it
     }
 
     /// Clears the learned estimate corrections (§3.10): every UserDefaults key starting with
@@ -105,8 +104,10 @@ extension AppModel {
 
     // MARK: Additions (WP4)
 
-    /// The UserDefaults key prefix of learned estimates (κ and time EMAs, §3.10). To be agreed with WP2; see WP4-NOTES.
-    public nonisolated static let learnedEstimatesKeyPrefix = "holdmybyte.learned."
+    /// The UserDefaults key prefix of learned estimates (κ and time EMAs, §3.10): the engine's
+    /// `LearnedEstimates.keyPrefix` (HMBEngine, which HMBUI cannot import). The engine reads its defaults on every
+    /// estimate, so removing the keys takes effect at once (Docs/DECISIONS.md).
+    public nonisolated static let learnedEstimatesKeyPrefix = "holdmybyte.estimate."
     public nonisolated static let learnedEstimatesResetNotification = Notification.Name("holdmybyte.learnedEstimatesReset")
 
     nonisolated static func wp4RemoveLearnedEstimates(from defaults: UserDefaults) {

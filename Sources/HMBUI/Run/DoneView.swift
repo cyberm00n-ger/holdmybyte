@@ -151,6 +151,7 @@ struct IssuesCard: View {
                 HStack {
                     Spacer()
                     Button(Copy.Issues.tryAgainForAll) { model.retry(record.id, photos: nil) }
+                        .hmbNeutralButtonTint()
                         .disabled(model.missingFolders.contains(record.id))
                 }
             }
@@ -217,7 +218,9 @@ struct MissingFolderBanner: View {
         StatusBanner(symbol: "folder.badge.questionmark", title: Copy.MissingFolder.title,
                      message: Copy.MissingFolder.message(record.outputFolder)) {
             Button(Copy.MissingFolder.locate) { model.locateFolder(record.id) }
+                .hmbNeutralButtonTint()
             Button(Copy.MissingFolder.removeFromHistory) { model.requestRemoveFromHistory(record.id) }
+                .hmbNeutralButtonTint()
         }
     }
 }
@@ -228,17 +231,28 @@ struct DeliveryTiles: View {
     let record: WeddingRecord
     let presentation: WeddingPresentation
     let folderMissing: Bool
+    @State private var width: CGFloat = Tokens.Layout.doneHeaderMaxWidth
+
+    nonisolated static let minimumTileWidth: CGFloat = 220
 
     var body: some View {
-        // A single delivery spans the full width (an adaptive column would leave it at one column's width).
-        let columns = record.deliveries.count == 1
-            ? [GridItem(.flexible())]
-            : [GridItem(.adaptive(minimum: 220), spacing: Tokens.Spacing.s12)]
-        LazyVGrid(columns: columns, spacing: Tokens.Spacing.s12) {
+        let count = Self.columnCount(tiles: record.deliveries.count, width: width)
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Tokens.Spacing.s12), count: count),
+                  spacing: Tokens.Spacing.s12) {
             ForEach(record.deliveries) { preset in
                 DeliveryTile(record: record, preset: preset, summary: presentation.summary(preset), folderMissing: folderMissing)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+
+    /// Tiles are at least 220 wide (§2.4 S10) and fill the row: one delivery spans the full width, two share it, and
+    /// rows stay balanced (four tiles that do not fit in one row become 2 × 2, never 3 + 1).
+    nonisolated static func columnCount(tiles: Int, width: CGFloat) -> Int {
+        guard tiles > 0 else { return 1 }
+        let fitting = max(1, Int((width + Tokens.Spacing.s12) / (minimumTileWidth + Tokens.Spacing.s12)))
+        let rows = (tiles + fitting - 1) / fitting
+        return (tiles + rows - 1) / rows
     }
 }
 
@@ -262,25 +276,33 @@ struct DeliveryTile: View {
                 .contentTransition(.numericText())
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            Text(sizeLine)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+            // One line when it fits; otherwise broken at the last "·" ("2560 px · WebP" / "159 MB for 535 photos"),
+            // never mid-phrase, and numbers are never truncated.
+            ViewThatFits(in: .horizontal) {
+                Text(sizeLine).lineLimit(1)
+                Text(Self.brokenAtLastSeparator(sizeLine)).fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
             if preset.isFullSize { SizeBar(source: summary.sourceBytes, output: summary.outputBytes) }
             if summary.keptOriginal > 0, preset.isLossy {
                 Text(Copy.Done.keptOriginal(summary.keptOriginal, locale: locale))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            HStack(alignment: .firstTextBaseline) {
-                proofLabel
-                Spacer(minLength: Tokens.Spacing.s8)
-                Button(Copy.Done.showInFinder) { model.revealInFinder(record.id, delivery: preset.id) }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-                    .disabled(folderMissing)
+            // Proof line and Show in Finder share a row when both fit; in a narrow tile the button goes under the
+            // proof line instead of squeezing it into a two-line column.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    proofLabel(wraps: false)
+                    Spacer(minLength: Tokens.Spacing.s8)
+                    showInFinder
+                }
+                VStack(alignment: .leading, spacing: Tokens.Spacing.s6) {
+                    proofLabel(wraps: true)
+                    showInFinder
+                }
             }
         }
         .frame(minHeight: Tokens.Layout.tileMinHeight - 2 * Tokens.Layout.tilePadding, alignment: .top)
@@ -288,18 +310,31 @@ struct DeliveryTile: View {
         .onAppear(perform: countDown)
     }
 
-    @ViewBuilder private var proofLabel: some View {
+    private var showInFinder: some View {
+        Button(Copy.Done.showInFinder) { model.revealInFinder(record.id, delivery: preset.id) }
+            .buttonStyle(.borderless)
+            .font(.caption)
+            .disabled(folderMissing)
+    }
+
+    /// "a · b · c" → "a · b" / "c" (the tile's second size line).
+    nonisolated static func brokenAtLastSeparator(_ line: String) -> String {
+        guard let range = line.range(of: " · ", options: .backwards) else { return line }
+        return line.replacingCharacters(in: range, with: "\n")
+    }
+
+    @ViewBuilder private func proofLabel(wraps: Bool) -> some View {
         if summary.failed > 0 {
             Label {
                 Text(Copy.Done.deliveredLine(delivered: summary.delivered, total: summary.total, locale: locale))
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(wraps ? 2 : 1).fixedSize(horizontal: false, vertical: true)
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
             }
             .font(.caption).foregroundStyle(Tokens.Palette.warning)
         } else {
             Label {
-                Text(proofLine).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                Text(proofLine).lineLimit(wraps ? 3 : 1).fixedSize(horizontal: false, vertical: true)
             } icon: {
                 Image(systemName: "checkmark.seal").foregroundStyle(.tint)
             }
@@ -400,7 +435,9 @@ struct ProofCard: View {
 
     @ViewBuilder private func proofText(_ delivery: DeliveryPreset, summary: DeliverySummary, canCompare: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(Copy.Done.proofTitle(met: presentation.metTarget(delivery), total: summary.total, locale: locale))
+            // Out of the delivered photos: a photo that failed (S11) never reached the quality check, and "533 of 535
+            // met their target" would claim two missed it, which §2.4 S11 rules out (quality never fails a photo).
+            Text(Copy.Done.proofTitle(met: presentation.metTarget(delivery), total: summary.delivered, locale: locale))
                 .font(.headline)
             if let lo = summary.minScore, let median = summary.medianScore, let hi = summary.maxScore {
                 Text(Copy.Done.proofDetail(lowest: lo, median: median, highest: hi))
@@ -518,9 +555,18 @@ struct ScoreHistogram: View {
         return counts.keys.sorted().map { Bin(start: $0, count: counts[$0] ?? 0) }
     }
 
-    static func ticks(lo: Double, hi: Double) -> [Double] {
-        let a = (lo + 0.5).rounded(), c = (hi - 0.5).rounded()
-        return [a, ((a + c) / 2).rounded(), c]
+    /// Three ticks inside the domain (half a point in from each end): whole points when the span allows, else
+    /// half points. Rounding to nearest could push the last tick onto the domain's edge, where Charts drops it.
+    nonisolated static func ticks(lo: Double, hi: Double) -> [Double] {
+        var a = (lo + 0.5).rounded(.up), c = (hi - 0.5).rounded(.down)
+        var mid = ((a + c) / 2).rounded()
+        if c - a < 2 {
+            a = ((lo + 0.5) * 2).rounded(.up) / 2
+            c = ((hi - 0.5) * 2).rounded(.down) / 2
+            mid = (a + c).rounded() / 2
+        }
+        guard c > a else { return [a] }
+        return mid > a && mid < c ? [a, mid, c] : [a, c]
     }
 }
 

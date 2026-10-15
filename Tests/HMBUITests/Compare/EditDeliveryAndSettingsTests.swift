@@ -143,7 +143,12 @@ import Testing
         #expect(EditDeliveryCopy.metadataTitle(.removeAll) == "Remove all except copyright")
         #expect(EditDeliveryCopy.colourTitle(.keepProfile) == "Keep original profile")
         #expect(EditDeliveryCopy.colourFooter == "Use sRGB for websites and social media.")
-        #expect(SettingsCopy.clearHistoryTitle(38) == "Clear the history of all 38 weddings?")
+        var state = AppState()
+        state.records = Fixtures.history
+        #expect(state.records.count == 38)
+        #expect(SettingsCopy.clearHistoryTitle(in: state, locale: Locale(identifier: "en_DE")) == "Clear the history of all 38 weddings?")
+        state.records = [Fixtures.finnUndLissy]
+        #expect(SettingsCopy.clearHistoryTitle(in: state, locale: Locale(identifier: "en_DE")) == "Clear the history of 1 wedding?")
         #expect(SettingsCopy.clearHistoryMessage == "Delivered photos are not touched.")
         #expect(GeneralSettingsTab.namingPreview("{wedding}-{number}") == "Finn-und-Lissy-0001.jpg")
     }
@@ -250,6 +255,9 @@ import Testing
     }
 
     @Test func resetLearnedEstimatesClearsOnlyItsKeys() {
+        // Must equal HMBEngine's `LearnedEstimates.keyPrefix` (the keys the engine reads); with the old
+        // "holdmybyte.learned." prefix the button removed nothing.
+        #expect(AppModel.learnedEstimatesKeyPrefix == "holdmybyte.estimate.")
         let defaults = UserDefaults.standard
         let learned = AppModel.learnedEstimatesKeyPrefix + "kappa.fullSize.wp4test"
         let other = "holdmybyte.wp4test.keep"

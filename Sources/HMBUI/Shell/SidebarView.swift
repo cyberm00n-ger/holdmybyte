@@ -97,6 +97,9 @@ struct WeddingRow: View {
     let record: WeddingRecord
     @Environment(AppModel.self) private var model
     @Environment(\.locale) private var locale
+    @State private var rowWidth: CGFloat = 0
+    @State private var subtitleWidth: CGFloat = 0
+    @State private var nameWidth: CGFloat = 0
 
     var body: some View {
         HStack(spacing: 10) {
@@ -105,16 +108,36 @@ struct WeddingRow: View {
                 .clipShape(Tokens.Radius.shape(Tokens.Radius.thumbnail))
             VStack(alignment: .leading, spacing: 1) {
                 Text(record.name).lineLimit(1).truncationMode(.middle)
+                    .background(alignment: .leading) {
+                        // The name's full width, measured, so the symbols give way before the name truncates.
+                        Text(record.name).lineLimit(1).fixedSize().hidden()
+                            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { nameWidth = $0 }
+                    }
+                // Numbers are never truncated (§2.9): the date and count keep their width; the name gives way.
                 Text(Copy.Sidebar.rowSubtitle(date: record.weddingDate, photos: record.photos.count, locale: locale))
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                    .fixedSize()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { subtitleWidth = $0 }
             }
             .layoutPriority(1)
             Spacer(minLength: 4)
             accessory
         }
         .frame(height: Tokens.Layout.sidebarRowHeight)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = $0 }
         .help(record.name)
         .accessibilityElement(children: .combine)
+    }
+
+    /// Delivery symbols shown (at most 4): as many as fit beside the full name and the date and count. The name is
+    /// what identifies the row, so the (tertiary) symbols give way first; a name longer than the row still
+    /// middle-truncates.
+    private var symbolCount: Int {
+        guard rowWidth > 0, subtitleWidth > 0 else { return 4 }
+        // thumbnail 32 + spacing 10 + text + spacing 10 + spacer ≥ 4 + spacing 10; an 11 pt symbol is up to 14 wide,
+        // plus 3 between symbols.
+        let free = rowWidth - 32 - 10 - max(subtitleWidth, nameWidth) - 10 - 4 - 10
+        return max(0, min(4, Int((free + 3) / 17)))
     }
 
     @ViewBuilder private var accessory: some View {
@@ -135,7 +158,7 @@ struct WeddingRow: View {
                     .foregroundStyle(Tokens.Palette.warning).accessibilityLabel("Has issues")
             } else {
                 HStack(spacing: 3) {
-                    ForEach(record.deliveries.prefix(4)) { preset in
+                    ForEach(record.deliveries.prefix(symbolCount)) { preset in
                         Image(systemName: preset.symbol)
                     }
                 }

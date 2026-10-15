@@ -85,10 +85,12 @@ enum OffscreenCapture {
 
     /// Prepares `root` (glass, backdrops, vibrancy; see the file comment), lets it re-render, and draws it.
     static func capture(_ root: NSView, appearance: NSAppearance, settleAfterRewrite: Double = 0.15) -> NSBitmapImageRep? {
+        if ProcessInfo.processInfo.environment["HMB_SNAPSHOT_DUMP"] != nil { dump(root, indent: 0, label: "before") }
         replaceGlass(in: root, appearance: appearance)
         settle(settleAfterRewrite)
         root.layoutSubtreeIfNeeded()
         root.displayIfNeeded()
+        if ProcessInfo.processInfo.environment["HMB_SNAPSHOT_DUMP"] != nil { dump(root, indent: 0, label: "after") }
         if let layer = root.layer { flattenTintedContents(layer, appearance: appearance) }
         guard root.bounds.width >= 1, root.bounds.height >= 1,
               let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else { return nil }
@@ -96,10 +98,48 @@ enum OffscreenCapture {
         return rep
     }
 
+    /// Prints the view tree (class, frame, hidden) for harness debugging (`HMB_SNAPSHOT_DUMP=1`).
+    static func dump(_ view: NSView, indent: Int, label: String) {
+        if indent == 0 { print("--- view tree (\(label))") }
+        print(String(repeating: "  ", count: indent) + "\(type(of: view)) \(view.frame)\(view.isHidden ? " hidden" : "")")
+
+        for subview in view.subviews { dump(subview, indent: indent + 1, label: label) }
+    }
+
     /// The window's frame view (title bar and toolbar included).
     static func frameView(of window: NSWindow) -> NSView { window.contentView?.superview ?? window.contentView! }
 
     // MARK: Glass and backdrops
+
+    private struct SavedFrame { let view: NSView; let frame: CGRect; let parentSize: CGSize }
+
+    /// Frames of `view`'s descendants (top-down), with their parents' sizes.
+    private static func descendantFrames(of view: NSView) -> [SavedFrame] {
+        view.subviews.flatMap { [SavedFrame(view: $0, frame: $0.frame, parentSize: view.frame.size)] + descendantFrames(of: $0) }
+    }
+
+    /// Puts back every frame that changed although its parent kept its size. A constraint-laid-out view lost its
+    /// constraints to views outside the moved subtree, so it is pinned to its old frame in its parent instead.
+    private static func restore(_ frames: [SavedFrame]) {
+        for saved in frames where saved.view.frame != saved.frame && saved.view.superview?.frame.size == saved.parentSize {
+            guard let parent = saved.view.superview else { continue }
+            if saved.view.translatesAutoresizingMaskIntoConstraints {
+                saved.view.frame = saved.frame
+                continue
+            }
+            var pins: [NSLayoutConstraint] = []
+            if saved.view.frame.width != saved.frame.width || saved.view.frame.minX != saved.frame.minX {
+                pins += [saved.view.leadingAnchor.constraint(equalTo: parent.leadingAnchor, constant: saved.frame.minX),
+                         saved.view.widthAnchor.constraint(equalToConstant: saved.frame.width)]
+            }
+            if saved.view.frame.height != saved.frame.height {
+                pins.append(saved.view.heightAnchor.constraint(equalToConstant: saved.frame.height))
+            }
+            for pin in pins { pin.priority = NSLayoutConstraint.Priority(999) }
+            NSLayoutConstraint.activate(pins)
+        }
+        frames.first?.view.window?.contentView?.superview?.layoutSubtreeIfNeeded()
+    }
 
     static func replaceGlass(in view: NSView, appearance: NSAppearance) {
         if view.className == "NSScrollPocket" { view.isHidden = true; return }
@@ -118,6 +158,10 @@ enum OffscreenCapture {
                 ])
             }
             if let content = glass.contentView {
+                // Moving the content out of the glass breaks the constraints that tie some of its subviews to the glass
+                // (the sidebar's search-field accessory shrinks to a sliver). Frames are restored afterwards wherever
+                // the parent kept its size.
+                let frames = descendantFrames(of: content)
                 glass.contentView = nil
                 standIn.addSubview(content)
                 content.translatesAutoresizingMaskIntoConstraints = false
@@ -127,6 +171,8 @@ enum OffscreenCapture {
                     content.topAnchor.constraint(equalTo: standIn.topAnchor),
                     content.bottomAnchor.constraint(equalTo: standIn.bottomAnchor),
                 ])
+                standIn.layoutSubtreeIfNeeded()
+                restore(frames)
                 replaceGlass(in: content, appearance: appearance)
             }
             glass.isHidden = true
@@ -146,7 +192,13 @@ enum OffscreenCapture {
            let maskObject = object.perform(NSSelectorFromString("image"))?.takeUnretainedValue(),
            CFGetTypeID(maskObject) == CGImage.typeID {
             let mask = maskObject as! CGImage
-            let tint = (layer.value(forKey: "contentsMultiplyColor") as! CGColor?) ?? NSColor.labelColor.cgColor
+            // The colour is the image's own `tint` times the layer's `contentsMultiplyColor` (either may be absent).
+            // Reading only the layer's colour drew some glyphs white (a white multiply over a grey tint).
+            let imageTint = object.responds(to: NSSelectorFromString("tint"))
+                ? object.perform(NSSelectorFromString("tint"))?.takeUnretainedValue() : nil
+            let ownTint = imageTint.flatMap { CFGetTypeID($0) == CGColor.typeID ? ($0 as! CGColor) : nil }
+            let multiply = layer.value(forKey: "contentsMultiplyColor") as! CGColor?
+            let tint = Self.multiplied(ownTint, multiply) ?? NSColor.labelColor.cgColor
             let filter = layer.compositingFilter as? String
             if let flat = flatten(mask: mask, tint: tint, filter: filter) {
                 layer.contents = flat
@@ -157,6 +209,16 @@ enum OffscreenCapture {
             layer.compositingFilter = nil
         }
         for sublayer in layer.sublayers ?? [] { flattenTintedContents(sublayer, appearance: appearance) }
+    }
+
+    /// `a × b` per component in sRGB; nil when both are nil.
+    static func multiplied(_ a: CGColor?, _ b: CGColor?) -> CGColor? {
+        guard let a else { return b }
+        guard let b else { return a }
+        guard let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+              let ca = a.converted(to: srgb, intent: .defaultIntent, options: nil)?.components, ca.count == 4,
+              let cb = b.converted(to: srgb, intent: .defaultIntent, options: nil)?.components, cb.count == 4 else { return a }
+        return CGColor(srgbRed: ca[0] * cb[0], green: ca[1] * cb[1], blue: ca[2] * cb[2], alpha: ca[3] * cb[3])
     }
 
     static func flatten(mask: CGImage, tint: CGColor, filter: String?) -> CGImage? {

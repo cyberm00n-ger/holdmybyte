@@ -22,6 +22,8 @@ enum SnapshotSurface: Equatable, Sendable {
 struct SnapshotScenario: Sendable {
     var state: AppState
     var engine = FixtureEngine.Configuration()
+    /// Output folders that do not exist (S12). Every other path exists, so no other done state shows the banner.
+    var missingFolders: Set<URL> = []
 }
 
 struct CatalogueEntry: Sendable {
@@ -97,9 +99,9 @@ enum StateCatalogue {
             Scenarios.done(Fixtures.only([.couple, .website], of: Fixtures.keptOriginal(7)))
         },
         CatalogueEntry("done-missing-folder", "§2.4 S12") {
-            // The fixture output folder (/Users/sebastian/Weddings/…) never exists on a build machine; see
-            // Docs/WP5-NOTES.md for how the done states expect WP3 to decide "missing".
-            Scenarios.done(Fixtures.only([.couple, .website], of: Fixtures.finnUndLissy))
+            var scenario = Scenarios.done(Fixtures.only([.couple, .website], of: Fixtures.finnUndLissy))
+            scenario.missingFolders = [Fixtures.finnUndLissy.outputFolder]
+            return scenario
         },
         CatalogueEntry("failed", "§2.4 S13") { Scenarios.done(Fixtures.failed(Fixtures.only([.couple, .website], of: Fixtures.finnUndLissy))) },
 
@@ -200,6 +202,8 @@ enum Scenarios {
         let completedAt = record.finishedAt ?? FixtureFactory.date(2026, 7, 14)
         scenario.state.records = history(replacingWith: record)
         scenario.state.sidebarVisible = true
+        scenario.state.selection = .wedding(record.id)          // Create More reopens setup in the wedding's own row
+        scenario.state.draft?.wedding = record.id
         scenario.state.draft?.existingWedding = record.id
         scenario.state.draft?.completedDeliveries = [.couple: completedAt, .website: completedAt]
         scenario.state.draft?.enabled[.archive] = true

@@ -168,11 +168,11 @@ enum CompareCopy {
 
 extension CompareState {
     /// Split is offered only with an original to compare against.
-    var canSplit: Bool { originalAvailable }
+    public var canSplit: Bool { originalAvailable }
     /// `\` (Show Original) needs the original.
-    var canShowOriginal: Bool { originalAvailable }
+    public var canShowOriginal: Bool { originalAvailable }
     /// `D` (Differences) needs the original.
-    var canShowDifferences: Bool { originalAvailable }
+    public var canShowDifferences: Bool { originalAvailable }
 
     /// Enforces the invariants after any change: no original → no Show Original and no Differences; divider in
     /// 0…1; centre in the unit square; position inside the sequence.
@@ -220,5 +220,5 @@ extension CompareState {
 
     static let latchThreshold: TimeInterval = 0.2
 
-    var currentPhoto: PhotoID? { sequence.indices.contains(position) ? sequence[position] : nil }
+    public var currentPhoto: PhotoID? { sequence.indices.contains(position) ? sequence[position] : nil }
 }

@@ -23,6 +23,7 @@ struct RenameSheet: View {
             HStack {
                 Spacer()
                 Button(Copy.Rename.cancel, role: .cancel) { dismiss() }
+                    .hmbNeutralButtonTint()
                     .keyboardShortcut(.cancelAction)
                 Button(Copy.Rename.save, action: save)
                     .keyboardShortcut(.defaultAction)

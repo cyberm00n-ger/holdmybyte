@@ -31,6 +31,11 @@ public final class AppModel {
     private var statusItemDismissed = false
     /// Incremented by Edit ▸ Find (⌘F); the root view focuses the sidebar search field.
     public private(set) var searchFocusRequest = 0
+    /// A text field in the main window (the sidebar search) is being edited: Compare's single-letter menu keys
+    /// must not take its typing.
+    public var textInputActive = false
+    /// Compare's window is the key window (set by Compare's keyboard handling); false while e.g. Settings is key.
+    public var compareWindowIsKey = true
 
     // MARK: Plumbing
 
@@ -822,7 +827,9 @@ public final class AppModel {
     public func requestStop(_ id: WeddingID) {
         guard let record = record(id) else { return }
         switch record.phase {
-        case .running, .paused, .interrupted: state.alert = .stop(id)
+        case .running, .paused, .interrupted:
+            state.sheet = nil                                 // an alert cannot show over a sheet (menu-bar Stop…)
+            state.alert = .stop(id)
         default: return
         }
     }
@@ -1030,15 +1037,7 @@ public final class AppModel {
             state.detailPath = []
         }
         if state.draft?.existingWedding == id { cancelSetup() }
-        let engine = engine, history = history
-        let previous = saveChain
-        pendingSaves += 1
-        saveChain = Task { [weak self] in
-            await previous?.value
-            await engine.discardJournal(id)
-            try? await history.remove(id)
-            self?.pendingSaves -= 1
-        }
+        removeFromStore([id])
         updateQueuePositions()
         advanceQueue()
         updateDock()
@@ -1155,6 +1154,7 @@ public final class AppModel {
             }
             return false
         }
+        state.sheet = nil                                     // the quit alert must be visible: no sheet over it
         state.alert = .quitWhileRunning(running)
         platform.openMainWindow()
         return false
@@ -1235,7 +1235,45 @@ public final class AppModel {
         await saveChain?.value
     }
 
-    private func updateDock() {
+    /// Removes `ids` from the history store (after the saves before them) and drops their journals; quit waits for it.
+    func removeFromStore(_ ids: [WeddingID]) {
+        guard !ids.isEmpty else { return }
+        let engine = engine, history = history
+        let previous = saveChain
+        pendingSaves += 1
+        saveChain = Task { [weak self] in
+            await previous?.value
+            for id in ids {
+                await engine.discardJournal(id)
+                try? await history.remove(id)
+            }
+            self?.pendingSaves -= 1
+        }
+    }
+
+    /// Forgets the model's working state for weddings that left the history (Clear History).
+    func forgetRemoved(_ ids: Set<WeddingID>) {
+        for id in ids {
+            resultIndex[id] = nil
+            requests[id] = nil
+            state.live[id] = nil
+        }
+        missingFolders.subtract(ids)
+        if let existing = state.draft?.existingWedding, ids.contains(existing) { cancelSetup() }
+        updateDock()
+    }
+
+    /// A delivery was added or edited (Edit Delivery sheet) while a setup is open: its estimate is recomputed and the
+    /// folder preflighted again, so the setup never shows a stale number for it.
+    func draftPresetChanged(_ id: DeliveryID) {
+        guard var draft = state.draft, draft.completedDeliveries[id] == nil else { return }
+        draft.estimates[id] = nil
+        state.draft = draft
+        if draft.enabled[id] == true { requestEstimates([id]) }
+        schedulePreflight(after: .zero)
+    }
+
+    func updateDock() {
         let badge = state.records.filter { $0.phase == .finished && !$0.viewed }.count
         platform.dock(runningID.map { _ in overallFraction }, badge)
     }

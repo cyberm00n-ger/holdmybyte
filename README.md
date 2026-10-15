@@ -33,6 +33,31 @@ Scripts/link-codecs.sh ~/Desktop/holdmybyte
 
 `Scripts/check-repo.sh` is the repository hygiene gate (no client photos, nothing over 512 KB, no `unsafeFlags`).
 
+Release bundle, icon and audits:
+
+```bash
+Scripts/bundle-app.sh            # build/holdmybyte.app (ad hoc signed; hmb in Contents/Helpers); --smoke launches it
+Scripts/check-repo.sh            # hygiene + network audit of the built binaries
+Scripts/notarize.sh              # Developer ID + notarytool (DEVELOPER_ID, NOTARY_PROFILE; owner only)
+```
+
+Screenshots of every UI state, rendered offscreen (works with the screen locked):
+
+```bash
+Scripts/snapshot.sh --release    # → Snapshots/index.html (see Docs/SNAPSHOTS.md)
+```
+
+## Run
+
+```bash
+swift run holdmybyte                         # the app: live engine, history in ~/Library/Application Support/holdmybyte
+HMB_FIXTURE_ENGINE=1 swift run holdmybyte    # demo: FixtureEngine and a fixture history, all in memory, no files
+```
+
+The app keeps its history as one `record.json` per wedding in `~/Library/Application Support/holdmybyte/Weddings`,
+presets and settings in its defaults (`holdmybyte.*`), and thumbnails in
+`~/Library/Caches/eu.sebastianhaas.holdmybyte/Thumbnails`.
+
 ## Layout
 
 | Path | Contents |
@@ -61,7 +86,10 @@ source "$HOME/Library/Application Support/holdmybyte-dev/env.sh"
 
 ## Benchmarks
 
-_To be filled by WP5 (`Docs/BENCHMARKS.md`)._
+`hmb bench` measures holdmybyte on a folder of photos and compares it with the old engine, JPEGmini's numbers and the
+v2 gates (`Benchmarks/baselines.json`). `Scripts/bench.sh holdout | wedding-couple | wedding-all | …` runs one gate
+set into `Benchmarks/runs/`; results, with the machine state of every timing, are in
+[`Docs/BENCHMARKS.md`](Docs/BENCHMARKS.md). Timing gates are only reported on a quiet machine (1-minute load < 3).
 
 ## Licence
 
