@@ -29,12 +29,17 @@ import Testing
         #expect(holdout.files.reduce(0) { $0 + $1.sourceBytes } == holdout.sourceBytes)
         #expect(holdout.files.allSatisfy { $0.oldReferenceScore > 73 && $0.oldReferenceScore < 76 && $0.oldOwnScore >= 74 })
         #expect(Set(holdout.files.map(\.name)).count == 19)
+        // Every old output held to the v2 floor really reaches it, and the sum is the recorded total.
+        #expect(holdout.files.allSatisfy { ($0.oldAtV2Floor?.v2Score ?? 0) >= 74 && ($0.oldAtV2Floor?.bytes ?? 0) >= $0.oldBytes })
+        #expect(holdout.files.reduce(0) { $0 + ($1.oldAtV2Floor?.bytes ?? 0) } == holdout.oldEngineAtV2Floor?.bytes)
     }
 
     @Test func gateThresholdsMatchTheSpec() {
         let gates = baselines.gates
         #expect(gates.quietLoadAverage == 3)
-        #expect(gates.G1.maxBytes == 50_310_000 && gates.G1.maxMeanProbes == 2.2)
+        // D-ENG-1: G1 = the old engine at equal v2-measured floor (was 50.31 MB = old + 1 % on the old engine's scale).
+        #expect(gates.G1.maxBytes == baselines.holdout.oldEngineAtV2Floor?.bytes && gates.G1.maxMeanProbes == 2.2)
+        #expect(gates.G1.maxBytes == 50_301_670)
         #expect(gates.G2.maxWallRatioToOldEngine == 0.6)
         #expect(gates.G3.maxBytes == 1_370_000_000 && gates.G3.maxWallSeconds == 600)
         #expect(gates.G4.minScore == 85 && gates.G4.maxBytes == 3_100_000_000)
