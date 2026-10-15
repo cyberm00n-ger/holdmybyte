@@ -159,11 +159,11 @@ final class JobRunner: @unchecked Sendable {
         defer { journal.close() }
 
         // Plans and the work list.
+        let stems = Self.stems(request: request)
         let plans = request.deliveries.sorted(by: DeliveryPlan.executionOrder).map { preset in
             let folder = folders[preset.id.rawValue] ?? preset.folderName
             return DeliveryPlan(preset: preset, folderName: folder,
-                                directory: output.appending(path: folder, directoryHint: .isDirectory),
-                                stems: Self.stems(request: request))
+                                directory: output.appending(path: folder, directoryHint: .isDirectory), stems: stems)
         }
         for plan in plans { writer.cleanPartial(in: plan.directory, removeDirectory: false) }   // crash leftovers
 
@@ -208,18 +208,21 @@ final class JobRunner: @unchecked Sendable {
             guard let photo = photosByIndex[index], let open = todo[index] else { return }
             state.withLock { $0.inFlight += 1 }
             defer { state.withLock { $0.inFlight -= 1 } }
-            do {
-                try pipeline.process(photo, plans: open) { result in
-                    try journal.append(result)
-                    state.withLock { s in
-                        s.results[ResultKey(result)] = result
-                        s.pending.append(result)
-                        s.newResults += 1
-                        let left = (s.remaining[index] ?? 1) - 1
-                        s.remaining[index] = left
-                        if left == 0 { s.photosDone += 1; s.rate.photoFinished(at: monotonicSeconds()) }
-                    }
+            var recorded = Set<DeliveryID>()
+            func record(_ result: PhotoResult) throws {
+                try journal.append(result)
+                recorded.insert(result.delivery)
+                state.withLock { s in
+                    s.results[ResultKey(result)] = result
+                    s.pending.append(result)
+                    s.newResults += 1
+                    let left = (s.remaining[index] ?? 1) - 1
+                    s.remaining[index] = left
+                    if left == 0 { s.photosDone += 1; s.rate.photoFinished(at: monotonicSeconds()) }
                 }
+            }
+            do {
+                try pipeline.process(photo, plans: open, emit: record)
             } catch is JobCancelled {
                 // pause/stop: the photo's unfinished deliveries are redone on resume
             } catch let interruption as JobInterruption {
@@ -232,7 +235,13 @@ final class JobRunner: @unchecked Sendable {
                     cancel.request(.pause(.outputNotWritable(path: journal.directory.path)))
                 }
             } catch {
+                // Not expected (the pipeline turns every per-delivery problem into a result); never leave a pair
+                // silently missing: the rest of this photo is listed as an encode failure.
                 Self.log.error("unexpected error on \(photo.relativePath, privacy: .public): \(String(describing: error), privacy: .public)")
+                for plan in open where !recorded.contains(plan.preset.id) {
+                    try? record(PhotoResult(photo: photo.id, delivery: plan.preset.id, status: .failed(.encodeFailed),
+                                            inBytes: photo.byteCount))
+                }
             }
         }
 

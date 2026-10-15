@@ -190,6 +190,7 @@ import Testing
         #expect(log.terminal == .paused(.user))
         let pausedAt = try #require(log.events.last?.t)
         let latency = pausedAt - (requested.snapshot ?? pausedAt)
+        print(String(format: "pause latency with 0.25 s fake encodes: %.3f s (load %.1f)", latency, loadAverage()))
         #expect(latency < 1.5, "pause latency \(latency) s")
         // No .tmp anywhere, and every delivered file is journaled with its size.
         let manifest = fileManifest(output)
