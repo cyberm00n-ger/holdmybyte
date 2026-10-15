@@ -67,7 +67,7 @@ import Testing
         hosting.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         var samples: [Double] = []
-        for round in 0..<6 {
+        for round in 0..<(Int(ProcessInfo.processInfo.environment["HMB_WP3_PERF_ROUNDS"] ?? "") ?? 6) {
             // Alternate between two finished weddings so every measurement is a fresh Done view.
             let target = round.isMultiple(of: 2) ? Fixtures.finnUndLissyID : Fixtures.history[5].id
             let start = ContinuousClock.now

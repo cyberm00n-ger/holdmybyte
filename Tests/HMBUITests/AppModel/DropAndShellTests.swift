@@ -126,7 +126,7 @@ import Testing
         #expect(h.model.showsTransientStatusItem)
         h.model.showsTransientStatusItem = false                          // the user removed it
         #expect(!h.model.showsTransientStatusItem)
-        try await waitUntil("finished") { h.phase(id) == .finished }
+        try await waitUntil("finished") { h.phase(id) == .finished && h.model.state.queue.isEmpty }
         #expect(!h.model.showsTransientStatusItem)                        // removed when the job ends
         #expect(!h.model.isRunning)                                       // idle: closing the window quits
         #expect(h.model.record(id)?.viewed == false)                      // finished while closed: Dock badge

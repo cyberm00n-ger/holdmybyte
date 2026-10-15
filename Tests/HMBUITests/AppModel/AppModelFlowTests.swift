@@ -25,7 +25,7 @@ import Testing
 
         let id = draft.wedding
         h.model.startDraft()
-        try await waitUntil("finished") { h.phase(id) == .finished }
+        try await waitUntil("finished") { h.phase(id) == .finished && h.model.state.queue.isEmpty }
         let record = try #require(h.model.record(id))
         #expect(record.results.count == 40 * 2)
         #expect(Set(record.deliveryCompletedAt.keys) == ["couple", "website"])
@@ -195,8 +195,7 @@ import Testing
         #expect(h.phase(id) == .running)
         h.model.requestStop(id)
         h.model.confirmAlert()                                         // Stop
-        try await waitUntil("stopped") { h.phase(id) == .stopped }
-        #expect(h.model.state.queue.isEmpty)
+        try await waitUntil("stopped") { h.phase(id) == .stopped && h.model.state.queue.isEmpty }
         let done = h.model.record(id)?.photosFinished ?? 0
         #expect(done > 0 && done < 40)
         h.model.resume(id)                                             // "The rest can be finished any time."
@@ -352,7 +351,7 @@ import Testing
                                           FixtureEngine(TestData.configuration())))
         let id = try await h.dropAndStart()
         try await waitUntil("failed") { if case .failed? = h.phase(id) { true } else { false } }
-        #expect(h.model.state.queue.isEmpty)
+        try await waitUntil("dequeued") { h.model.state.queue.isEmpty }
         h.model.retry(id, photos: nil)
         try await waitUntil("finished") { h.phase(id) == .finished }
         #expect(h.engine.runs.last?.resume == false)

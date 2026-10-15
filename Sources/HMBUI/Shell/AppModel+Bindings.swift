@@ -43,7 +43,7 @@ extension AppModel {
 
     /// Opens Compare for `record` at `photo` (or the first photo) in the grid's delivery.
     public func compare(_ record: WeddingRecord, photo: PhotoID?, delivery chosen: DeliveryID? = nil, spotCheck: Bool = false) {
-        let presentation = WeddingPresentation(record)
+        let presentation = WeddingPresentation.of(record)
         guard let delivery = presentation.compareDelivery(chosen ?? state.gridDelivery), !missingFolders.contains(record.id) else { return }
         var start = photo ?? state.selectedPhoto ?? record.photos.first?.id ?? PhotoID(0)
         if spotCheck, let hardest = presentation.lowest(1, delivery: delivery).first { start = hardest.photo.id }

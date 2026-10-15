@@ -10,7 +10,7 @@ struct DoneView: View {
     @State private var viewportWidth: CGFloat = Tokens.Layout.windowDefault.width - 260
 
     var body: some View {
-        let presentation = WeddingPresentation(record)
+        let presentation = WeddingPresentation.of(record)
         let missing = model.missingFolders.contains(record.id)
         ScrollView {
             VStack(alignment: .leading, spacing: Tokens.Spacing.s24) {

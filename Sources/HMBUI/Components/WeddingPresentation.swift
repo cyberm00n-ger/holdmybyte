@@ -21,10 +21,31 @@ public struct IssueGroup: Identifiable, Equatable, Sendable {
     public var id: String { failure.rawValue + "|" + (delivery?.id.rawValue ?? "*") }
 }
 
-public struct WeddingPresentation {
+public final class WeddingPresentation {
     public let record: WeddingRecord
     /// Latest result per (photo, delivery).
     public let latest: [ResultKey: PhotoResult]
+    private var summaries: [DeliveryID: DeliverySummary] = [:]
+    private var lowestCache: [DeliveryID: (n: Int, items: [(photo: SourcePhoto, score: Double)])] = [:]
+
+    /// A shared presentation for finished weddings (their results no longer change; a retry changes `finishedAt`),
+    /// so the Done view's many parts reuse one set of summaries. Running weddings get a fresh one.
+    @MainActor
+    public static func of(_ record: WeddingRecord) -> WeddingPresentation {
+        guard record.phase == .finished else { return WeddingPresentation(record) }
+        let key = CacheKey(id: record.id, results: record.results.count, finishedAt: record.finishedAt,
+                           deliveries: record.deliveries.map(\.id), name: record.name)
+        if let hit = cache[key] { return hit }
+        let presentation = WeddingPresentation(record)
+        if cache.count > 16 { cache.removeAll() }
+        cache[key] = presentation
+        return presentation
+    }
+
+    private struct CacheKey: Hashable {
+        var id: WeddingID; var results: Int; var finishedAt: Date?; var deliveries: [DeliveryID]; var name: String
+    }
+    @MainActor private static var cache: [CacheKey: WeddingPresentation] = [:]
 
     public init(_ record: WeddingRecord) {
         self.record = record
@@ -49,7 +70,11 @@ public struct WeddingPresentation {
     }
 
     public func summary(_ preset: DeliveryPreset) -> DeliverySummary {
-        DeliverySummary.make(preset: preset, photos: record.photos, results: record.results.filter { $0.delivery == preset.id })
+        if let cached = summaries[preset.id] { return cached }
+        let summary = DeliverySummary.make(preset: preset, photos: record.photos,
+                                           results: record.results.filter { $0.delivery == preset.id })
+        summaries[preset.id] = summary
+        return summary
     }
 
     /// Photos that failed in at least one delivery.
@@ -108,14 +133,22 @@ public struct WeddingPresentation {
         return cells
     }
 
-    /// The `n` lowest-scoring photos of `delivery` (done photos only), lowest first.
+    /// The `n` lowest-scoring photos of `delivery` (done photos only), lowest first; ties by capture order.
     public func lowest(_ n: Int, delivery: DeliveryPreset) -> [(photo: SourcePhoto, score: Double)] {
-        let scored = record.photos.compactMap { photo -> (SourcePhoto, Double)? in
+        if let cached = lowestCache[delivery.id], cached.n >= n { return Array(cached.items.prefix(n)) }
+        // One pass keeping the best n (n is tiny), instead of sorting every photo.
+        var best: [(photo: SourcePhoto, score: Double)] = []
+        best.reserveCapacity(n + 1)
+        for photo in record.photos {
             guard let result = latest[ResultKey(photo: photo.id, delivery: delivery.id)], result.status == .done,
-                  let score = result.score else { return nil }
-            return (photo, score)
+                  let score = result.score else { continue }
+            if best.count == n, let last = best.last, score >= last.score { continue }
+            let at = best.firstIndex { score < $0.score } ?? best.count
+            best.insert((photo, score), at: at)
+            if best.count > n { best.removeLast() }
         }
-        return Array(scored.sorted { ($0.1, $0.0.id.index) < ($1.1, $1.0.id.index) }.prefix(n)).map { (photo: $0.0, score: $0.1) }
+        lowestCache[delivery.id] = (n, best)
+        return best
     }
 
     /// Scores of `delivery`'s done photos.
