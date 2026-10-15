@@ -63,14 +63,14 @@ struct SidebarView: View {
                     if key.id == clickedID, old?.id == key.id, old?.section == key.section, old?.inProgress == key.inProgress { return }
                     if key.id == clickedID, old?.id != key.id { return }
                     Task { @MainActor in
-                        // Again after the list has measured its rows: an early pass uses estimated row heights and
-                        // can stop short (scrolling to a visible row is a no-op).
-                        for (pass, delay) in [0, 100, 350, 650].enumerated() {
+                        // Centred, like Finder's reveal (clamped at the list's ends): a minimal scroll stopped short
+                        // while the list was still measuring its rows. Repeated once after layout settles.
+                        for (pass, delay) in [0, 150].enumerated() {
                             if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
                             if isSnapshotRendering || pass > 0 {
-                                scroller.scrollTo(key.id)
+                                scroller.scrollTo(key.id, anchor: .center)
                             } else {
-                                withAnimation(Tokens.Motion.standard(reduceMotion: reduceMotion)) { scroller.scrollTo(key.id) }
+                                withAnimation(Tokens.Motion.standard(reduceMotion: reduceMotion)) { scroller.scrollTo(key.id, anchor: .center) }
                             }
                         }
                     }

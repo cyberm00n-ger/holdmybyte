@@ -37,6 +37,7 @@ Release bundle, icon and audits:
 
 ```bash
 Scripts/bundle-app.sh            # build/holdmybyte.app (ad hoc signed; hmb in Contents/Helpers); --smoke launches it
+Scripts/make-icon.sh build/assets  # asset catalog only: Liquid Glass app icon + AccentColor via actool (Xcode 26)
 Scripts/check-repo.sh            # hygiene + network audit of the built binaries
 Scripts/notarize.sh              # Developer ID + notarytool (DEVELOPER_ID, NOTARY_PROFILE; owner only)
 ```
