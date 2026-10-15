@@ -24,13 +24,17 @@ public enum DeliveryCatalog {
                                                    colour: .keepProfile, metadata: .keepAll, folderName: "Highest")
 
     public static func preset(named name: String) throws -> DeliveryPreset {
+        func builtIn(_ id: DeliveryID) throws -> DeliveryPreset {
+            guard let preset = DeliveryPreset.builtIns.first(where: { $0.id == id }) else { throw UnknownDelivery(name: name) }
+            return preset
+        }
         switch name.lowercased() {
-        case "couple": DeliveryPreset.builtIns[0]
-        case "website": DeliveryPreset.builtIns[1]
-        case "social": DeliveryPreset.builtIns[2]
-        case "archive": DeliveryPreset.builtIns[3]
-        case "high-full": highFull
-        case "highest-full": highestFull
+        case "couple": return try builtIn(.couple)
+        case "website": return try builtIn(.website)
+        case "social": return try builtIn(.social)
+        case "archive": return try builtIn(.archive)
+        case "high-full": return highFull
+        case "highest-full": return highestFull
         default: throw UnknownDelivery(name: name)
         }
     }

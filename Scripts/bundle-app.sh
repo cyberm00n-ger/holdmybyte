@@ -113,7 +113,8 @@ if [ "$SMOKE" -eq 1 ]; then
         kill "$pid"; wait "$pid" 2>/dev/null || true
         echo "bundle-app: smoke: the app launched and was still running after 4 s"
     else
-        wait "$pid"; die "smoke: the app exited within 4 s (status $?)"
+        rc=0; wait "$pid" || rc=$?     # under set -e a bare failing `wait` would end the script without a message
+        die "smoke: the app exited within 4 s (status $rc)"
     fi
 fi
 

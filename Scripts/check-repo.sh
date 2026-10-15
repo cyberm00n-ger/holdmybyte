@@ -36,8 +36,9 @@ done < <(git ls-files -z)
 # unsafeFlags.
 if git grep -n 'unsafeFlags' -- Package.swift 'Sources/*.swift' 'Sources/**/*.swift'; then fail "unsafeFlags found"; fi
 
-# Homebrew paths in Package.swift and the scripts. Lines that grep for them (audits) and CMake's ignore list may name them.
-brew_hits="$(git grep -nE '/opt/homebrew|/usr/local' -- Package.swift 'Scripts/*' | grep -vE 'grep|IGNORE_PREFIX_PATH' || true)"
+# Homebrew paths in Package.swift and the scripts. Allowed only inside a quoted grep pattern (the audits themselves)
+# and as CMake's ignore list; any other use on a line that merely also contains "grep" still fails.
+brew_hits="$(git grep -nE '/opt/homebrew|/usr/local' -- Package.swift 'Scripts/*' | grep -vE "grep[^|]*'[^']*(/opt/homebrew|/usr/local)[^']*'[^|]*(\||;|\)|$)|CMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local\"$" || true)"
 if [ -n "$brew_hits" ]; then printf '%s\n' "$brew_hits" >&2; fail "Homebrew path in Package.swift or a script"; fi
 
 # Codec archive exports (B3).

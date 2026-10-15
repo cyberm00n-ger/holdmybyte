@@ -18,7 +18,7 @@ were building (load averages are given with each timing).
 | `Sources/HMBSnapshot/AppIconArt.swift` | the placeholder icon (white print on a teal glass slab), drawn in CoreGraphics |
 | `Sources/HMBBench/*` | `HMBCommand` (parsing), `CommandRunner` (compress / estimate / bench over any `EngineService`), `PrimitiveCommands` (score / inspect), `EngineJobRunner`, `OldEngineRunner`, `PathSafety`, `DeliveryCatalog` + `BalancedTarget`, `BenchReport` + CSV, `MachineState` / `ResourceUsage` / `Provenance`, `Baselines`, `GateEvaluator` (G1–G8), `OutputDigest` |
 | `Sources/hmb/main.swift` | wiring only: `LiveEngine` (support folder in `$TMPDIR/holdmybyte-cli-<pid>`, never the app's), `EnginePrimitives.live()` |
-| `Tests/HMBBenchTests/*` | 34 tests (below); `Scaffold/` deleted as WP0 allowed |
+| `Tests/HMBBenchTests/*` | 36 tests (below); `Scaffold/` deleted as WP0 allowed |
 | `Scripts/bundle-app.sh` `make-icon.sh` `snapshot.sh` `bench.sh` `check-repo.sh` `notarize.sh` | §4.2, §5.5, §6 |
 | `Benchmarks/baselines.json` | DATENLAGE §1b/§7/§8 totals and times, JPEGmini, holdout per-file numbers, gate thresholds |
 | `Docs/SNAPSHOTS.md`, `Docs/BENCHMARKS.md` | how to run, rendering notes, review checklist, report format, reference numbers |
@@ -29,11 +29,11 @@ were building (load averages are given with each timing).
 |---|---|---|
 | 1 | `swift run hmb-snapshot` renders all catalogue ids in both appearances without the window server in ≤ 120 s | **Met for the harness, not yet for the views.** All 42 ids × 2 + 4 × 2 = 92 images render in 81.4 s (release, settle 0.7 s, load 7.3 → 4.6) with no window-server capture API. On this branch the views are WP0 stubs: 39 light window renders are flagged blank (a centred `ContentUnavailableView` on white is > 99 % one colour), so the run exits 1 until WP3/WP4 merge — the blank check doing its job. `--self-test` (glass sidebar, toolbar, vibrant text, sheet, materials, glass-button fallback, CALayer view) passes 8/8 in both appearances. The screen was **unlocked** during these runs (`IOConsoleLocked = false`); the locked-screen run is still to be done (Q9). |
 | 2 | `bundle-app.sh` produces a launchable `.app`; audit passes; `codesign --verify --deep` succeeds | **Met.** `Scripts/bundle-app.sh --smoke`: 43.6 s (release builds incremental, load 12.9), `build/holdmybyte.app` 5.3 MB, `otool -L` system libraries only, no Homebrew strings, `codesign --verify --deep --strict` valid, the app was still running after 4 s, bundled `hmb --version` prints the codec versions. |
-| 3 | `HMBBenchTests`: CSV/JSON schema; gate evaluation against a synthetic baseline; refusal when `-o` is inside a source | **Met.** 34 tests: CSV columns/escaping, JSON round trip and required keys, totals maths, G1–G8 pass/fail/not-evaluated (incl. the quiet-machine rule) on a synthetic baseline, set-kind detection, `-o`/`--json`/`--out` refusal (inside, equal, loose file's folder, case variant, symlink) before the engine is even created, bench end-to-end over a file-backed fake engine (repeats, determinism, stop/resume), the repo `baselines.json`, catalogue ids == §5.5 (parsed from `SPEC.md`), the old-engine parser, and one live old-engine run (gated by `HMB_OLD_ENGINE` + `HMB_HOLDOUT`). |
+| 3 | `HMBBenchTests`: CSV/JSON schema; gate evaluation against a synthetic baseline; refusal when `-o` is inside a source | **Met.** 36 tests: CSV columns/escaping, JSON round trip and required keys, totals maths, G1–G8 pass/fail/not-evaluated (incl. the quiet-machine rule) on a synthetic baseline, set-kind detection, `-o`/`--json`/`--out` refusal (inside, equal, loose file's folder, case variant, symlink) before the engine is even created, bench end-to-end over a file-backed fake engine (repeats, determinism, stop/resume), the repo `baselines.json`, catalogue ids == §5.5 (parsed from `SPEC.md`), the old-engine parser, A/B over a stand-in `squeeze` (repeat indices, output matching), and one live old-engine run (gated by `HMB_OLD_ENGINE` + `HMB_HOLDOUT`). |
 | 4 | `check-repo.sh`: no photos, no `unsafeFlags`, no Homebrew strings in `Package.swift`/scripts except the audit regex | **Met**, plus: tracked generated outputs, `_jpeg_` exports in the codec archive (B3), and the B5 network audit (`nm -u` + `otool -L` of the bundle's binaries) — green on the bundle above. |
 | 5 | `baselines.json` with DATENLAGE §1b/§8 totals and times, JPEGmini, holdout per-file old bytes and reference scores | **Met.** Holdout sum = 49,806,559 bytes (= "49.81 MB"), checked by a test. |
 
-`swift build` (debug and release) and `swift test` are green with zero warnings: 97 tests in 18 suites (34 of them
+`swift build` (debug and release) and `swift test` are green with zero warnings: 99 tests in 19 suites (36 of them
 WP5's), with the `env.sh` variables set.
 
 ## Measurements
@@ -133,3 +133,19 @@ v2 gates (`Benchmarks/baselines.json`). `Scripts/bench.sh holdout | wedding-coup
 set into `Benchmarks/runs/`; results, with the machine state of every timing, are in
 [`Docs/BENCHMARKS.md`](Docs/BENCHMARKS.md). Timing gates are only reported on a quiet machine (1-minute load < 3).
 ```
+
+## Review fixes (independent review, 2026-10-15)
+
+- `hmb bench`: `--out` is created only after the scan, and is first checked against the scan's source roots and
+  photo folders (they can differ from `--set` through symlinks). The resume check honours `preflight.canStart` and
+  path-checks its output folder. Old-engine runs keep their repeat index explicitly. Estimate errors are logged
+  instead of silently dropped.
+- `HMB_WORKERS` is exported before the engine is created (so the engine can read it at set-up, and `setenv` never
+  runs while engine threads may call `getenv`).
+- Old-engine output matching: exact stem first, then stem + separator; a bare prefix (`IMG_1` vs `IMG_10.jpg`) no
+  longer matches. `--delivery` names resolve built-ins by id, not by array position.
+- `hmb-snapshot`: `HMB_SNAPSHOT_SETTLE` is validated (0…10 s); `manifest.json` and `index.html` are written
+  atomically.
+- `bundle-app.sh --smoke`: a crashed app now reports its exit status instead of `set -e` ending the script silently.
+- `check-repo.sh`: Homebrew paths are allowed only inside a quoted `grep` pattern or as CMake's ignore list, not on
+  any line that merely contains the word "grep".

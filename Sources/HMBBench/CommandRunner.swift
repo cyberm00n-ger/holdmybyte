@@ -40,6 +40,8 @@ public struct CommandRunner: Sendable {
         let presets = try HMBCommand.presets(options.deliveries)
         try PathSafety.check(output: options.output, sources: options.sources)
         if let json = options.json { try PathSafety.check(output: json, sources: options.sources) }
+        // Before the engine exists: HMB_WORKERS is read at engine set-up, and setenv must not race engine threads.
+        let processorUse = Self.processorUse(workers: options.workers)
         let engine = try makeEngine()
         let jobs = EngineJobRunner(engine: engine)
         let machineBefore = MachineState.capture()
@@ -49,7 +51,7 @@ public struct CommandRunner: Sendable {
         try PathSafety.check(output: options.output, sources: scan.sourceRoots)
         var request = JobRequest(wedding: WeddingID(), name: scan.suggestedName, photos: scan.photos, sourceRoots: scan.sourceRoots,
                                  deliveries: presets, outputFolder: options.output, naming: .default,
-                                 processorUse: Self.processorUse(workers: options.workers))
+                                 processorUse: processorUse)
         let preflight = await engine.preflight(request)
         for notice in preflight.notices { log("\(notice.severity.rawValue): \(notice)") }
         guard preflight.canStart else { throw Refused("preflight blocked the job (see the notices above)") }
@@ -100,9 +102,9 @@ public struct CommandRunner: Sendable {
             }
         }
         let baselines = try options.baselines.map(Baselines.load(from:)) ?? Baselines.defaultURL().map(Baselines.load(from:))
+        let processorUse = Self.processorUse(workers: options.workers)
         let engine = try makeEngine()
         let jobs = EngineJobRunner(engine: engine)
-        try fileManager.createDirectory(at: options.out, withIntermediateDirectories: true)
 
         let machineBefore = MachineState.capture()
         let quietLimit = baselines?.gates.quietLoadAverage ?? 3
@@ -112,17 +114,23 @@ public struct CommandRunner: Sendable {
         let started = Date()
         let scan = try await jobs.scan([options.set])
         guard !scan.photos.isEmpty else { throw Refused("no photos found in \(options.set.path)") }
+        // The scan's roots can differ from --set (symlinks); nothing is created before --out is checked against them.
+        try PathSafety.check(output: options.out, sources: scan.sourceRoots + scan.photos.map(\.url))
+        try fileManager.createDirectory(at: options.out, withIntermediateDirectories: true)
         let kind = options.setKind ?? SetKind.detect(photos: scan.photos, baselines: baselines)
         log("set: \(scan.photos.count) photos, \(HMBFormat.bytes(scan.totalBytes)), kind \(kind.rawValue)")
 
         // Estimates first (G7 compares them with the actual bytes).
         let estimateStart = ContinuousClock.now
-        let estimates = (try? await engine.estimate(photos: scan.photos, deliveries: presets)) ?? [:]
+        let estimates: [DeliveryID: DeliveryEstimate]
+        do { estimates = try await engine.estimate(photos: scan.photos, deliveries: presets) } catch {
+            log("estimates failed (G7's estimate check will fail): \(error)")
+            estimates = [:]
+        }
         log(String(format: "estimates in %.2f s", Self.seconds(ContinuousClock.now - estimateStart)))
 
         var runs: [(EngineJobRunner.Outcome, URL)] = []
-        var oldRuns: [(OldEngineRunner.Outcome, URL, DeliveryPreset)] = []
-        let processorUse = Self.processorUse(workers: options.workers)
+        var oldRuns: [(outcome: OldEngineRunner.Outcome, folder: URL, preset: DeliveryPreset, index: Int)] = []
         let log = self.log
         for index in 1...options.repeatCount {
             // A/B/A/B: holdmybyte, then the old engine, per repeat.
@@ -149,7 +157,7 @@ public struct CommandRunner: Sendable {
                     log("run \(index): old engine \(preset.id.rawValue) → \(folder.path)")
                     let old = try oldEngine.run(photos: scan.photos, preset: preset, output: folder, run: index)
                     log(String(format: "run %d: old engine exit %d in %.1f s", index, old.exitStatus, old.wallSeconds))
-                    oldRuns.append((old, folder, preset))
+                    oldRuns.append((old, folder, preset, index))
                 }
             }
         }
@@ -157,9 +165,8 @@ public struct CommandRunner: Sendable {
         var report = makeReport(command: "bench", label: options.label, started: started, setPath: options.set.path, kind: kind,
                                 photos: scan.photos, presets: presets, machineBefore: machineBefore, runs: runs,
                                 estimates: estimates, baselines: baselines)
-        for (old, folder, preset) in oldRuns {
+        for (old, folder, preset, index) in oldRuns {
             let photos = scan.photos.count
-            let index = old.rows.first?.run ?? 1
             if let existing = report.runs.firstIndex(where: { $0.engine == "old" && $0.index == index }) {
                 report.runs[existing].wallSeconds += old.wallSeconds
                 report.runs[existing].cpuSeconds += old.cpuSeconds
@@ -192,7 +199,10 @@ public struct CommandRunner: Sendable {
             let folder = options.out.appending(path: "resume", directoryHint: .isDirectory)
             var request = JobRequest(wedding: WeddingID(), name: scan.suggestedName, photos: scan.photos, sourceRoots: scan.sourceRoots,
                                      deliveries: presets, outputFolder: folder, naming: .default, processorUse: processorUse)
-            request.outputFolder = await engine.preflight(request).outputFolder
+            let preflight = await engine.preflight(request)
+            guard preflight.canStart else { throw Refused("preflight blocked the resume check: \(preflight.notices)") }
+            request.outputFolder = preflight.outputFolder
+            try PathSafety.check(output: request.outputFolder, sources: [options.set] + scan.sourceRoots)
             log("resume check: stop after \(stopAfter) photos, then resume → \(request.outputFolder.path)")
             let first = await jobs.run(request, stopAfterPhotos: stopAfter)
             log("resume check: first part \(EngineJobRunner.phaseText(first.phase))")

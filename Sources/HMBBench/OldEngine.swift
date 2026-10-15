@@ -51,11 +51,11 @@ public struct OldEngineRunner: Sendable {
         let usageAfter = ResourceUsage.current(children: true)
 
         let parsed = Self.parse(String(decoding: data, as: UTF8.self))
-        let outputs = (try? FileManager.default.contentsOfDirectory(at: output, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        let outputs = ((try? FileManager.default.contentsOfDirectory(at: output, includingPropertiesForKeys: [.fileSizeKey])) ?? [])
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
         let rows = photos.map { photo -> BenchFileRow in
             let name = (photo.relativePath as NSString).lastPathComponent
-            let stem = (name as NSString).deletingPathExtension
-            let match = outputs.first { ($0.lastPathComponent as NSString).deletingPathExtension.hasPrefix(stem) }
+            let match = Self.output(for: name, in: outputs)
             let bytes = match.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }.map(Int64.init)
             let line = parsed[name]
             return BenchFileRow(run: index, delivery: preset.id.rawValue, name: photo.relativePath, sourceBytes: photo.byteCount,
@@ -65,6 +65,19 @@ public struct OldEngineRunner: Sendable {
         return Outcome(rows: rows, wallSeconds: Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18,
                        cpuSeconds: usageAfter.cpuSeconds - usageBefore.cpuSeconds, exitStatus: process.terminationStatus,
                        outputBytes: OutputDigest.totalBytes(in: output))
+    }
+
+    /// The old engine's output for the source file `name`: same stem (any extension), else the stem followed by a
+    /// separator (a suffix the old CLI added). A bare prefix never matches, so `IMG_1` does not claim `IMG_10.jpg`.
+    static func output(for name: String, in outputs: [URL]) -> URL? {
+        let stem = (name as NSString).deletingPathExtension
+        func outputStem(_ url: URL) -> String { (url.lastPathComponent as NSString).deletingPathExtension }
+        if let exact = outputs.first(where: { outputStem($0) == stem }) { return exact }
+        return outputs.first { url in
+            let candidate = outputStem(url)
+            guard candidate.hasPrefix(stem), let next = candidate.dropFirst(stem.count).first else { return false }
+            return !next.isLetter && !next.isNumber
+        }
     }
 
     public struct Line: Equatable, Sendable {

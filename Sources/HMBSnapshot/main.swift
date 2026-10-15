@@ -80,7 +80,11 @@ let windowSize: CGSize = {
     return CGSize(width: parts[0], height: parts[1])
 }()
 
-let settleSeconds = environment["HMB_SNAPSHOT_SETTLE"].flatMap(Double.init) ?? 0.7
+let settleSeconds: Double = {
+    guard let text = environment["HMB_SNAPSHOT_SETTLE"], !text.isEmpty else { return 0.7 }
+    guard let value = Double(text), value.isFinite, (0...10).contains(value) else { fail("HMB_SNAPSHOT_SETTLE must be seconds in 0…10") }
+    return value
+}()
 let outputDirectory = URL(fileURLWithPath: environment["HMB_SNAPSHOT_DIR"].flatMap { $0.isEmpty ? nil : $0 } ?? "Snapshots",
                           isDirectory: true).standardizedFileURL
 
@@ -166,8 +170,8 @@ do {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     encoder.dateEncodingStrategy = .iso8601
-    try encoder.encode(manifest).write(to: outputDirectory.appending(path: "manifest.json"))
-    try Data(ContactSheet.html(manifest).utf8).write(to: outputDirectory.appending(path: "index.html"))
+    try encoder.encode(manifest).write(to: outputDirectory.appending(path: "manifest.json"), options: .atomic)
+    try Data(ContactSheet.html(manifest).utf8).write(to: outputDirectory.appending(path: "index.html"), options: .atomic)
 } catch {
     fail("cannot write the manifest or index: \(error)", status: 1)
 }
