@@ -116,22 +116,28 @@ struct RunBanner: View {
             let text = Copy.Banner.paused(reason, done: progress.photosDone, total: progress.photosTotal, locale: locale)
             StatusBanner(symbol: symbol(reason), symbolStyle: style(reason), title: text.title, message: text.message) {
                 Button(Copy.Banner.resume) { model.resume(record.id) }
+                    .hmbNeutralButtonTint()
                     .disabled(!model.canResume(record))
                 if reason != .user {
                     Button(Copy.Banner.stop) { model.requestStop(record.id) }
+                        .hmbNeutralButtonTint()
                 }
             }
         case .stopped:
             let text = Copy.Banner.stopped(done: progress.photosDone, total: progress.photosTotal, locale: locale)
             StatusBanner(symbol: "stop.circle.fill", title: text.title, message: text.message) {
                 Button(Copy.Banner.resume) { model.resume(record.id) }
+                    .hmbNeutralButtonTint()
                 Button(Copy.Banner.showInFinder) { model.revealInFinder(record.id, delivery: nil) }
+                    .hmbNeutralButtonTint()
             }
         case .interrupted:
             let text = Copy.Banner.interrupted(done: progress.photosDone, total: progress.photosTotal, locale: locale)
             StatusBanner(symbol: "arrow.clockwise.circle.fill", title: text.title, message: text.message) {
                 Button(Copy.Banner.resume) { model.resume(record.id) }
+                    .hmbNeutralButtonTint()
                 Button(Copy.Banner.stopHere) { model.stopHere(record.id) }
+                    .hmbNeutralButtonTint()
             }
         default:
             EmptyView()

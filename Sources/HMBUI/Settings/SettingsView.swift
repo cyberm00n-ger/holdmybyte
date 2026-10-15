@@ -78,6 +78,7 @@ struct GeneralSettingsTab: View {
                             .pickerStyle(.radioGroup)
                             .labelsHidden()
                             Button("Choose…") { model.chooseSaveLocation() }
+                                .hmbNeutralButtonTint()
                         }
                         if case .folder(let url) = settings.saveLocation {
                             Label(Self.breadcrumb(url), systemImage: "folder")
@@ -214,6 +215,7 @@ struct DeliveriesSettingsTab: View {
                     }
                     .fixedSize()
                     Button("Edit…") { if let selected { editing = EditingPreset(preset: selected, isNew: false) } }
+                        .hmbNeutralButtonTint()
                         .disabled(selected == nil)
                     Spacer()
                 }
@@ -224,6 +226,7 @@ struct DeliveriesSettingsTab: View {
             Section {
                 HStack {
                     Button("Restore Default Deliveries") { model.restoreDefaultDeliveries() }
+                        .hmbNeutralButtonTint()
                     Spacer()
                 }
             }
@@ -281,6 +284,7 @@ struct AdvancedSettingsTab: View {
                                                            set: { value in model.updateSettings { $0.detailedLogs = value } }))
                 LabeledContent("Logs") {
                     Button("Show Logs in Finder") { model.showLogsInFinder() }
+                        .hmbNeutralButtonTint()
                 }
             }
             Section {
@@ -294,12 +298,14 @@ struct AdvancedSettingsTab: View {
                             model.resetLearnedEstimates()
                             estimatesReset = true
                         }
+                        .hmbNeutralButtonTint()
                     }
                 }
             }
             Section {
                 LabeledContent("History") {
                     Button("Clear History…") { confirmingClear = true }
+                        .hmbNeutralButtonTint()
                         .disabled(model.clearableHistoryCount == 0)
                 }
             }

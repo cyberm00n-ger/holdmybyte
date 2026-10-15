@@ -43,9 +43,16 @@ struct HMBGlassButtonStyleModifier: ViewModifier {
     func body(content: Content) -> some View {
         switch (prominent, isSnapshotRendering) {
         case (true, false): content.buttonStyle(.glassProminent)
-        case (false, false): content.buttonStyle(.glass)
+        case (false, false): content.buttonStyle(.glass).hmbNeutralButtonTint()
         case (true, true): content.buttonStyle(.borderedProminent)
-        case (false, true): content.buttonStyle(.bordered)
+        case (false, true): content.buttonStyle(.bordered).hmbNeutralButtonTint()
         }
     }
+}
+
+extension View {
+    /// A secondary push or glass button (Cancel, Choose Photos…, Spot-Check…) draws like the system's: neutral bezel,
+    /// label colour. The app's root `.tint` (Multicolor accent, §2.5) would otherwise colour its label and bezel teal,
+    /// which macOS never does for a secondary button and §2.5's accent list does not allow.
+    public func hmbNeutralButtonTint() -> some View { tint(nil) }
 }

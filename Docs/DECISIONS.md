@@ -58,3 +58,21 @@ Append-only. One short entry each: date, area, the question it answers, the deci
 - **[app] Edit ▸ Find.** Our Find (⌘F, focuses the sidebar search) replaces the system text-editing group, whose own
   ⌘F "Find…" competed with it. ⌘⌫ (Remove from History) is disabled while the search field is focused.
 - **[app] Alerts over sheets.** Quit-while-running and Stop… close an open sheet first, so the alert can show.
+
+## 2026-10-15 · app verification (branch `int-app`)
+
+- **[app] Secondary buttons are neutral.** The root `.tint` (Multicolor accent) coloured every push button teal (Cancel
+  beside the teal primary button, banner, notice, sheet, Settings and Choose Photos…/Spot-Check… buttons), which macOS
+  never does for a secondary button and §2.5's accent list does not allow. Those buttons take `.hmbNeutralButtonTint()`
+  (`.tint(nil)`); checkboxes, radios, borderless link buttons and the prominent button keep the accent.
+- **[app] Proof card headline counts delivered photos.** "533 of 533 photos met their quality target" (was "533 of
+  535"): failed photos never reached the quality check, and S11 rules out a quality failure.
+- **[app] Delivery tile footer.** Size line on one line, else broken at the last "·"; the proof line and Show in Finder
+  share a row only when both fit, else Show in Finder goes under the proof line (`ViewThatFits`).
+- **[app] Sidebar rows.** The wedding name has priority over the delivery symbols: symbols are dropped until the full
+  name fits (it still middle-truncates when longer than the row).
+- **[app] Learned-estimates prefix.** `AppModel.live()` checks `AppModel.learnedEstimatesKeyPrefix ==
+  LearnedEstimates.keyPrefix` (precondition), the one place both modules are visible.
+- **[app] UI test timeouts.** `waitUntil` defaults to 90 s (was 10 s): in the full `swift test` process the engine
+  suites' synchronous work starves the cooperative pool, and 12 flow tests timed out together at load 38. Passing
+  tests return as soon as their condition holds.

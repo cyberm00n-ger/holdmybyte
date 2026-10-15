@@ -145,7 +145,11 @@ struct Harness {
 struct Timeout: Error, CustomStringConvertible { let description: String }
 
 @MainActor
-func waitUntil(_ what: String, timeout: Double = 10, _ condition: @MainActor () -> Bool) async throws {
+/// Polls `condition` on the main actor. The default timeout is generous on purpose: `swift test` runs every target in one
+/// process, and the engine suites run long synchronous codec and metric work on the cooperative pool, which can starve
+/// the FixtureEngine's tasks for well over 10 s at high load (12 flow tests timed out together at load 38). A passing
+/// test returns as soon as the condition holds, so the timeout only bounds how long a real hang takes to fail.
+func waitUntil(_ what: String, timeout: Double = 90, _ condition: @MainActor () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(timeout)
     while !condition() {
         if Date() > deadline { throw Timeout(description: "timed out waiting for \(what)") }

@@ -82,6 +82,8 @@ below was not repeated locked; over SSH the process must run in the user's GUI s
 | 2026-10-15 | WP5 branch, debug, settle 0.45 s | 92 | 67.6 s | 13.99 11.27 9.46 | same stubs |
 | 2026-10-15 | `--self-test`, release | 2 renders, 8 checks | 2 s | 4.42 | 8/8 pass |
 | 2026-10-15 | `int-app` (all packages merged), release, settle 0.7 s | 92 (42 ids × 2 + 4 × 2) | 102.5 s | 18.41 17.36 17.95 → 15.51 16.64 17.60 (Lightroom and builds running) | exit 0, 0 blank (largest one-colour share 92.2 %); reviewed below |
+| 2026-10-15 | `int-app` verification, before fixes, release | 92 | 94.7 s | 14.58 29.72 30.25 → 8.48 23.56 27.81 | exit 0; 30 PNGs reviewed (both appearances, 780×560): teal secondary buttons, truncated sidebar names, cramped tile footers, "533 of 535 met their target" |
+| 2026-10-15 | `int-app` verification, after fixes, release | 92 | 96.9 s | 6.80 17.01 23.66 → 5.29 13.65 21.61 | exit 0, 0 blank; the four defects above fixed (Docs/DECISIONS.md) |
 
 ## Review checklist (§6.3)
 
@@ -143,6 +145,8 @@ and dark). Defects found and fixed are in the notes and in `Docs/DECISIONS.md`.
 - the sidebar's running ProgressView ring draws in the label colour, and `.tertiary` delivery symbols are faint in
   dark;
 - `.saturation(0)` does not render: queued/working grid cells get a greyscale thumbnail while snapshot rendering.
+- Settings renders the selected tab without its toolbar tab bar (`SettingsView`'s snapshot path skips the `TabView`);
+- NSAlert's default button is the system blue (no `AccentColor` asset; see Docs/DECISIONS.md), as in the real app.
 
 ## What each state contains
 

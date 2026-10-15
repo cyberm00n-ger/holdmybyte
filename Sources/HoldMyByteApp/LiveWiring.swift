@@ -11,6 +11,9 @@ import HMBUI
 
 extension AppModel {
     @MainActor static func live() -> AppModel {
+        // HMBUI cannot import the engine, so it repeats the engine's key prefix; this is where both are visible.
+        precondition(AppModel.learnedEstimatesKeyPrefix == LearnedEstimates.keyPrefix,
+                     "Reset Learned Estimates must remove the engine's keys")
         if DemoSupport.isEnabled {
             return AppModel(state: AppState(), engine: DemoSupport.engine(), history: DemoSupport.history(),
                             presetsStore: DemoSupport.presets(), settingsStore: DemoSupport.settings(),

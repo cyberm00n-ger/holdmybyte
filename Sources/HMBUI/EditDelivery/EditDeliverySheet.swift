@@ -121,6 +121,7 @@ public struct EditDeliverySheet: View {
                     .accessibilityLabel("Can’t save: \(message)")
             }
             Button("Cancel") { onFinish() }
+                .hmbNeutralButtonTint()
                 .keyboardShortcut(.cancelAction)
                 .controlSize(.large)
             Button("Save") {

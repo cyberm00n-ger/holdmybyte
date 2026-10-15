@@ -28,7 +28,7 @@ struct SlowCompareEngine: EngineService {
 }
 
 @MainActor @Suite struct ComparePairLoaderTests {
-    static func waitUntil(_ timeout: Duration = .seconds(10), _ condition: () -> Bool) async {
+    static func waitUntil(_ timeout: Duration = .seconds(90), _ condition: () -> Bool) async {  // see TestSupport.waitUntil
         let deadline = ContinuousClock.now + timeout
         while !condition(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
     }

@@ -215,6 +215,7 @@ struct LocationRow: View {
                         .truncationMode(.middle)
                         .help(model.draftOutputFolder?.path ?? "")
                     Button(Copy.Setup.change) { model.chooseOutputFolder() }
+                        .hmbNeutralButtonTint()
                         .disabled(draft.existingWedding != nil)
                 }
             }
@@ -308,12 +309,16 @@ struct NoticeRow: View {
         case .alreadyCompressed:
             HStack(spacing: 6) {
                 Button(Copy.Notice.useArchiveOnly) { model.useArchiveOnly(notice) }
+                    .hmbNeutralButtonTint()
                 Button(Copy.Notice.continueAnyway) { model.acknowledge(notice) }
+                    .hmbNeutralButtonTint()
             }
         case .holdMyByteOutput:
             Button(Copy.Notice.continueAnyway) { model.acknowledge(notice) }
+                .hmbNeutralButtonTint()
         case .notEnoughSpace, .notWritable, .outputInsideSource:
             Button(Copy.Notice.chooseAnotherLocation) { model.chooseOutputFolder() }
+                .hmbNeutralButtonTint()
                 .disabled(draft.existingWedding != nil)
         default:
             EmptyView()
@@ -350,6 +355,7 @@ struct SetupBottomBar: View {
                 Button(Copy.Setup.cancel) { model.cancelSetup() }
                     .keyboardShortcut(.cancelAction)
                     .controlSize(.large)
+                    .hmbNeutralButtonTint()
                 Button(primaryTitle) { model.startDraft() }
                     .hmbGlassButtonStyle(prominent: true)
                     .controlSize(.large)

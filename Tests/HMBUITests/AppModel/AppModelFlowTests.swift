@@ -54,8 +54,7 @@ import Testing
         h.model.startDraft()
         #expect(h.model.startPending)
         #expect(h.model.state.draft != nil)
-        // Generous: in the full parallel suite the Metal engine tests load every core (load average 40–50 measured).
-        try await waitUntil("finished", timeout: 30) { h.phase(id) == .finished }
+        try await waitUntil("finished") { h.phase(id) == .finished }
         #expect(!h.model.startPending)
     }
 

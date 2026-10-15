@@ -53,7 +53,9 @@ struct QueuedView: View {
                 Text(Copy.Queued.description(after: ahead?.name))
             } actions: {
                 Button(Copy.Queued.startNow) { model.startNow(record.id) }
+                    .hmbNeutralButtonTint()
                 Button(Copy.Queued.remove) { model.removeFromQueue(record.id) }
+                    .hmbNeutralButtonTint()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -93,7 +95,9 @@ struct FailedView: View {
             Text(reason)
         } actions: {
             Button(Copy.Failed.tryAgain) { model.retry(record.id, photos: nil) }
+                .hmbNeutralButtonTint()
             Button(Copy.Failed.remove) { model.requestRemoveFromHistory(record.id) }
+                .hmbNeutralButtonTint()
         }
     }
 }
