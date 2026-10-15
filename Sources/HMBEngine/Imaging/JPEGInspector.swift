@@ -38,6 +38,7 @@ enum JPEGInspector {
             guard d.count >= 4, d[0] == 0xFF, d[1] == 0xD8 else { throw PrimitiveError("not a JPEG (no SOI)") }
             var header = JPEGHeader()
             var iccChunks: [(sequence: Int, payload: Data)] = []
+            var lumaQualityFound = false
             var i = 2
             while i + 1 < d.count {
                 guard d[i] == 0xFF else { throw PrimitiveError("corrupt JPEG: expected a marker at byte \(i)") }
@@ -66,7 +67,16 @@ enum JPEGInspector {
                         header.isHoldMyByteOutput = true
                     }
                 case 0xDB:
-                    if header.estimatedQuality == nil { header.estimatedQuality = estimateQuality(dqt: payload) }
+                    // Tables may come one per DQT segment, chroma first: prefer the luma table (Tq = 0) wherever it
+                    // is, else the first table seen.
+                    if !lumaQualityFound, let quality = estimateQuality(dqt: payload) {
+                        if containsTable(dqt: payload, id: 0) {
+                            header.estimatedQuality = quality
+                            lumaQualityFound = true
+                        } else if header.estimatedQuality == nil {
+                            header.estimatedQuality = quality
+                        }
+                    }
                 case 0xC0...0xCF where code != 0xC4 && code != 0xC8 && code != 0xCC:
                     if header.frameMarker == nil, payload.count >= 6 {
                         header.frameMarker = code
@@ -90,6 +100,20 @@ enum JPEGInspector {
             }
             return header
         }
+    }
+
+    /// Whether a DQT payload defines table `wanted` (walks the table list without validating the values).
+    static func containsTable(dqt: Data, id wanted: Int) -> Bool {
+        let b = [UInt8](dqt)
+        var i = 0
+        while i < b.count {
+            let precision = Int(b[i]) >> 4, id = Int(b[i]) & 15
+            let size = 64 * (precision == 0 ? 1 : 2)
+            guard i + 1 + size <= b.count else { return false }
+            if id == wanted { return true }
+            i += 1 + size
+        }
+        return false
     }
 
     /// IJG inverse on the luma table (Tq = 0, else the first table): quality from the mean scale factor against

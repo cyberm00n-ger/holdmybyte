@@ -15,7 +15,7 @@ below). Measurements and the metric validation are in `Docs/METRIC.md`.
 | `Sources/HMBEngine/Imaging/` | `ImageIODecoder` (inspect: header-only, memory-mapped; decode: own RGB colour space, stored orientation, `kCGImageSourceShouldCache: false`), `JPEGInspector` (APPn/COM in order, ICC chain, EXIF, XMP, DQT quality, SOF type, CMYK, Adobe APP14, holdmybyte COM), `VImageProcessing` (features, Lanczos resize, perceptual `vImageConverter` to sRGB, mosaic), `GrainFeatures` (verbatim port). |
 | `Sources/HMBEngine/Metric/` | `MetalSSIMULACRA2` (+ `MetalShaders`), `SSIMULACRA2` CPU oracle, `CPUSSIMULACRA2`. |
 | `Sources/HMBEngine/Interfaces/Primitives+Live.swift` | `EnginePrimitives.live()`. |
-| `Tests/HMBEngineTests/Primitives/` | 8 files, 33 tests: 2 need local data (`HMB_TEST_PHOTOS` + cjpegli, `HMB_HOLDOUT`), several extend to the samples when set, 3 are opt-in benchmarks (`HMB_METRIC_BENCH=1`). |
+| `Tests/HMBEngineTests/Primitives/` | 8 files, 36 tests: 2 need local data (`HMB_TEST_PHOTOS` + cjpegli, `HMB_HOLDOUT`), several extend to the samples when set, 3 are opt-in benchmarks (`HMB_METRIC_BENCH=1`). |
 
 ## Acceptance criteria (§5.1)
 
@@ -27,9 +27,9 @@ below). Measurements and the metric validation are in `Docs/METRIC.md`.
 | 4 | 45 MP score ≤ 0.40 s median of 10, reference ≤ 0.20 s | **met**: 0.046 s (GPU 0.043 s), prepare 0.008 s, load 6.6 (release). Debug build 0.070 s. |
 | 5 | Features = old GrainEstimator within 1e-6; resize never upscales; sRGB→sRGB identity (Δ ≤ 1) | **met** (12 synthetic image/size cases, expected values from running the old code once) |
 | 6 | Repeated decodes identical; jpegli d 0.5 → PSNR ≥ 40 dB; CMYK/arithmetic/holdmybyte fixtures | **met** |
-| 7 | No leaks (malloc_zone_statistics, 50 rounds, < 5 MB); C errors return messages, never abort | **met**: run alone, 2.9 KB per 50 rounds of all three codecs. Inside the full parallel suite the heap is shared with tests decoding 45 MP photos, so the in-suite bound (smallest of ten windows) is weaker; run `swift test --filter fiftyEncodesDoNotLeak` for the exact number. Error paths tested at C and Swift level |
+| 7 | No leaks (malloc_zone_statistics, 50 rounds, < 5 MB); C errors return messages, never abort | **met**: the 50 rounds (all three codecs, success and error paths, through the Swift wrappers) run in a forked single-threaded child, so the reading is exact inside the parallel suite too: 0 B. Checked to fail on an injected 200 KB/round leak (10.6 MB). Error paths tested at C and Swift level |
 
-`swift build` and `swift test` (97 tests in 18 suites, all targets, with `HMB_TEST_PHOTOS`/`HMB_HOLDOUT` set, 147 s at load 9.4; the 3 benchmarks skipped) are green; zero
+`swift build` and `swift test` (100 tests in 18 suites after the review, all targets, with `HMB_TEST_PHOTOS`/`HMB_HOLDOUT` set, 142 s at load ~10; the 3 benchmarks skipped; `swift build -c release` also warning-free) are green; zero
 warnings in WP1 files.
 
 ## Deviations and decisions
@@ -45,12 +45,14 @@ warnings in WP1 files.
 | D7 | `inspect` for PNG/TIFF/HEIC | EXIF as TIFF payload | `exif = nil`; `xmp` = ImageIO's XMP serialisation of all metadata (EXIF/TIFF/GPS in the `exif:`/`tiff:` namespaces); ICC from the image's colour space | ImageIO does not expose raw EXIF bytes for these containers; WP2's XMP policy filter can still remove GPS/serials. |
 | D8 | `resized` | — | long edge exactly `longEdge`, short edge rounded (≥ 1); returns the same instance when no downscale is needed | — |
 | D9 | `decode` of transparent PNG/TIFF | "alpha ignored" | flattened onto white; X byte is 255 everywhere | deterministic, opaque contract |
-| D10 | `convertedToSRGB` | — | returns the same instance when the colour space already is sRGB (by name or identical ICC) | the identity test also forces a real conversion (Δ ≤ 1) |
+| D10 | `convertedToSRGB` | — | returns the same instance when the colour space already is sRGB (by name or identical ICC); if the `vImageConverter` refuses a profile, CoreGraphics colour matching (perceptual) converts instead; only if both fail is the input returned, still tagged non-sRGB | the identity test also forces a real conversion (Δ ≤ 1); never hand back unconverted pixels that the caller would label sRGB |
 | D11 | mosaic | 8×4 grid of 256² | port of `scripts/mosaic.py` "grid" (cell centre floored to /16), also for portrait images (no rotation of the grid); nil if width < 2048 or height < 1024 | as specified; portrait 45 MP (5504 wide) qualifies |
+| D12 | `inspect` file mapping | `fileBytes` "memory-mapped" | mapped only on internal, local volumes; read into memory on external/network/unknown volumes | a mapped file on an unplugged drive raises SIGBUS on the next page touch instead of the read error §3.8 maps to `.sourceUnavailable` |
+| D13 | DQT quality estimate | IJG inverse | the luma table (Tq 0) is preferred across DQT segments (chroma-first files) | — |
 
 Additions (public, beyond §3.2): `MetalSSIMULACRA2.shared`, `init(workingSetRetention:referenceRetention:)`,
 `drainPools()`, `lastGPUSeconds`, `lastUploadWasWrapped`, `Reference.byteCount`; `SSIMULACRA2.score(reference:distorted:)`,
-`CPUSSIMULACRA2`; `ImageIODecoder.inspect(data:)`; `VImageProcessing.resizedSize`, `mosaicOrigins`, `sRGB`;
+`CPUSSIMULACRA2`; `ImageIODecoder.inspect(data:)`, `readingOptions(for:)`; `VImageProcessing.resizedSize`, `mosaicOrigins`, `sRGB`;
 `JpegliEncoder.progressiveLevel`, `LibWebPEncoder.method`.
 
 ## Hand-over to WP2
@@ -63,6 +65,12 @@ Additions (public, beyond §3.2): `MetalSSIMULACRA2.shared`, `init(workingSetRet
   (CPU) vs 0.05 s GPU. Worker count, not the GPU lane, will decide G2/G3.
 - `JpegliEncoder` validates markers (APPn/COM only, payload ≤ 65 533 bytes); ICC chains must be pre-chunked.
 - `LibWebPPrepared` frees its picture in `deinit`; one prepare per (photo, delivery), any number of encodes.
+- Non-RGB sources (greyscale, CMYK) decode into **sRGB** pixels (`PixelImage.colorSpace` says so), while
+  `SourceInfo.iccProfile` stays the file's own (grey or CMYK) profile. Under `keepProfile`, embed an RGB profile
+  only: re-embedding a grey ICC into an RGB JPEG/WebP is invalid. Use `decoded.colorSpace.copyICCData()` when the
+  source profile's colour model is not RGB.
+- `convertedToSRGB` returns its input unchanged only when no conversion was possible; check
+  `VImageProcessing.isSRGB(result.colorSpace)` before embedding the sRGB profile.
 
 ## Open questions for the lead
 

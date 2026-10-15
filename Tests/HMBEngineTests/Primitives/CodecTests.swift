@@ -217,31 +217,65 @@ import Testing
         return Int(stats.size_in_use)
     }
 
+    /// 50 rounds of all three codecs (success and error paths, through the Swift wrappers) must not grow the heap by
+    /// 5 MB or more.
+    ///
+    /// The heap is process-wide and other suites decode 45 MP photos in parallel, so an in-process before/after is
+    /// meaningless inside `swift test`: a neighbour's free of one decoded photo (180 MB) hides any leak, and its
+    /// allocations fail the bound for nothing. The rounds therefore run in a forked child: one thread executing only
+    /// code the parent has just run (warm: no lazy library or runtime state is created in the child), so nothing but
+    /// the rounds touches the heap between the two `malloc_zone_statistics` readings. The child reports the delta
+    /// through a pipe and leaves with `_exit`; it never prints, and it is killed if it does not answer in 120 s.
     @Test func fiftyEncodesDoNotLeak() throws {
         let image = Synthetic.image(.waves, width: 512, height: 384)
         let source = try Data(contentsOf: TestFixtureFiles.gradientSRGB)
         let markers = Self.markers(icc: nil)
-        func round() throws {
-            _ = try jpeg.encode(image, distance: 1.5, subsampling: .s420, markers: markers)
-            let prepared = try webp.prepare(image)
-            _ = try webp.encode(prepared, quality: 70, icc: Data([1, 2, 3]), exif: nil, xmp: Data("<x/>".utf8))
-            _ = try jxl.reconstructJPEG(jxl: try jxl.transcodeLossless(jpeg: source, effort: 7))
-            _ = try? jpeg.encode(image, distance: 1, subsampling: .s420, markers: [JPEGMarker(code: 0xE1, payload: Data(count: 70_000))])
-            _ = try? jxl.reconstructJPEG(jxl: Data("broken".utf8))
+        let oversized = [JPEGMarker(code: 0xE1, payload: Data(count: 70_000))]
+        let icc = Data([1, 2, 3]), xmp = Data("<x/>".utf8), broken = Data("broken".utf8)
+        let (jpeg, webp, jxl) = (self.jpeg, self.webp, self.jxl)
+        /// One round; false if a call that must succeed failed or a call that must fail succeeded.
+        func round() -> Bool {
+            guard (try? jpeg.encode(image, distance: 1.5, subsampling: .s420, markers: markers)) != nil,
+                  let prepared = try? webp.prepare(image),
+                  (try? webp.encode(prepared, quality: 70, icc: icc, exif: nil, xmp: xmp)) != nil,
+                  let archived = try? jxl.transcodeLossless(jpeg: source, effort: 7),
+                  (try? jxl.reconstructJPEG(jxl: archived)) != nil else { return false }
+            return (try? jpeg.encode(image, distance: 1, subsampling: .s420, markers: oversized)) == nil
+                && (try? jxl.reconstructJPEG(jxl: broken)) == nil
         }
-        for _ in 0..<5 { try round() }          // warm caches and lazily created library state
-        // The heap is process-wide and other suites (decoding 45 MP photos) run in parallel, so the 50 rounds are
-        // measured as ten windows of five and the smallest window is scaled up: a leak grows the heap in every
-        // window, a neighbour's allocation only in some. Run alone (`swift test --filter fiftyEncodesDoNotLeak`)
-        // every window is exact (measured: ≤ 3 KB per 50 rounds of each codec).
-        var windows: [Int] = []
-        for _ in 0..<10 {
+        for _ in 0..<5 { #expect(round()) }      // warm: lazily created library and runtime state
+
+        // `fork` is unavailable to Swift by declaration only; the child runs nothing but `round()` and syscalls.
+        typealias Fork = @convention(c) () -> pid_t
+        let fork = unsafeBitCast(try #require(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "fork")), to: Fork.self)
+        var fds: [Int32] = [-1, -1]
+        try #require(pipe(&fds) == 0)
+        let (readEnd, writeEnd) = (fds[0], fds[1])
+        let pid = fork()
+        if pid == 0 {
+            close(readEnd)
             let before = Self.heapInUse()
-            for _ in 0..<5 { try round() }
-            windows.append(Self.heapInUse() - before)
+            var ok = true
+            for _ in 0..<50 where !round() { ok = false }
+            var delta = ok ? Int64(Self.heapInUse() - before) : Int64.min
+            _ = withUnsafeBytes(of: &delta) { write(writeEnd, $0.baseAddress, 8) }
+            _exit(0)
         }
-        let delta = max(0, windows.min()!) * 10
-        print("[memory] heap delta per 5 rounds: \(windows); bound for 50 rounds: \(delta) bytes")
+        close(writeEnd)
+        defer { close(readEnd) }
+        try #require(pid > 0, "fork failed: errno \(errno)")
+        var poller = pollfd(fd: readEnd, events: Int16(POLLIN), revents: 0)
+        var delta = Int64.max
+        if poll(&poller, 1, 120_000) == 1 {
+            _ = withUnsafeMutableBytes(of: &delta) { read(readEnd, $0.baseAddress, 8) }
+        } else {
+            kill(pid, SIGKILL)
+        }
+        var status: Int32 = 0
+        waitpid(pid, &status, 0)
+        print("[memory] heap delta over 50 rounds in an isolated child: \(delta) bytes")
+        #expect(delta != Int64.max, "the child did not report (hung or crashed)")
+        #expect(delta != Int64.min, "a codec call misbehaved in the child")
         #expect(delta < 5 << 20)
     }
 }

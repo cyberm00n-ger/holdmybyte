@@ -95,4 +95,35 @@ import Testing
         q95.append(contentsOf: JPEGInspector.standardLuma.map { UInt8(max(1, ($0 * 10 + 50) / 100)) })
         #expect(JPEGInspector.estimateQuality(dqt: q95).map { (94...96).contains($0) } == true)
     }
+
+    /// Sources are memory-mapped only on internal volumes (an unplugged external drive must surface as a read
+    /// error, not as SIGBUS inside a mapped page).
+    @Test func sourcesAreMappedOnlyOnInternalVolumes() throws {
+        #expect(ImageIODecoder.readingOptions(for: TestFixtureFiles.gradientSRGB) == .alwaysMapped)
+        #expect(ImageIODecoder.readingOptions(for: URL(fileURLWithPath: "/Volumes/hmb-no-such-volume/a.jpg")) == [])
+        let mounted = (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? []
+        for name in mounted {
+            let volume = URL(fileURLWithPath: "/Volumes/\(name)", isDirectory: true)
+            guard let values = try? volume.resourceValues(forKeys: [.volumeIsInternalKey]), values.volumeIsInternal == false else { continue }
+            #expect(ImageIODecoder.readingOptions(for: volume) == [], "\(name) is external")
+        }
+        #expect(try decoder.inspect(TestFixtureFiles.gradientSRGB).fileBytes == Data(contentsOf: TestFixtureFiles.gradientSRGB))
+    }
+
+    /// One table per DQT segment with the chroma table first (legal, written by some cameras and editors): the
+    /// estimate must still come from the luma table.
+    @Test func qualityEstimatePrefersLumaAcrossSegments() throws {
+        func segment(_ code: UInt8, _ payload: [UInt8]) -> [UInt8] {
+            [0xFF, code, UInt8((payload.count + 2) >> 8), UInt8((payload.count + 2) & 0xFF)] + payload
+        }
+        let chroma = [UInt8(0x01)] + [UInt8](repeating: 99, count: 64)                 // id 1, very coarse
+        let luma = [UInt8(0x00)] + JPEGInspector.standardLuma.map { UInt8(max(1, ($0 * 50 + 50) / 100)) }   // q75
+        let sof: [UInt8] = [8, 0, 16, 0, 16, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]
+        var bytes: [UInt8] = [0xFF, 0xD8]
+        bytes += segment(0xDB, chroma) + segment(0xDB, luma) + segment(0xC0, sof)
+        bytes += [0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9]
+        let header = try JPEGInspector.scan(Data(bytes))
+        #expect(header.estimatedQuality == 75)
+        #expect(JPEGInspector.containsTable(dqt: Data(luma), id: 0) && !JPEGInspector.containsTable(dqt: Data(chroma), id: 0))
+    }
 }

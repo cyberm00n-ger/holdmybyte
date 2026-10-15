@@ -51,9 +51,40 @@ public struct VImageProcessing: ImageProcessing {
     }
 
     /// Perceptual-intent conversion to sRGB with a `vImageConverter`. An image that already is sRGB is returned as is.
+    /// Should vImage refuse the source profile, CoreGraphics colour matching (also perceptual) converts instead: the
+    /// caller embeds the sRGB profile into every converted delivery, so handing back unconverted pixels would
+    /// silently mislabel them. Only if both fail is the input returned, still tagged with its own (non-sRGB) space,
+    /// so `isSRGB(result.colorSpace)` tells the caller that nothing was converted.
     public func convertedToSRGB(_ image: PixelImage) -> PixelImage {
         if Self.isSRGB(image.colorSpace) { return image }
-        return (try? Self.convert(image, to: Self.sRGB)) ?? image
+        if let converted = try? Self.convert(image, to: Self.sRGB) { return converted }
+        if let converted = try? Self.convertWithCoreGraphics(image, to: Self.sRGB) { return converted }
+        return image
+    }
+
+    /// Fallback conversion: draws the pixels (tagged with their own space) into a `target` bitmap context.
+    static func convertWithCoreGraphics(_ image: PixelImage, to target: CGColorSpace) throws -> PixelImage {
+        let bitmapInfo = CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        let output = PixelImage(width: image.width, height: image.height, colorSpace: target)
+        try withExtendedLifetime(image) {
+            // The provider borrows the pixels; `image` outlives the draw, and the CGImage does not escape.
+            guard let provider = CGDataProvider(dataInfo: nil, data: image.pixels.baseAddress!,
+                                                size: image.bytesPerRow * image.height, releaseData: { _, _, _ in }),
+                  let source = CGImage(width: image.width, height: image.height, bitsPerComponent: 8, bitsPerPixel: 32,
+                                       bytesPerRow: image.bytesPerRow, space: image.colorSpace,
+                                       bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo), provider: provider, decode: nil,
+                                       shouldInterpolate: false, intent: .perceptual),
+                  let context = CGContext(data: output.pixels.baseAddress, width: output.width, height: output.height,
+                                          bitsPerComponent: 8, bytesPerRow: output.bytesPerRow, space: target,
+                                          bitmapInfo: bitmapInfo) else {
+                throw PrimitiveError("CoreGraphics cannot convert from \(image.colorSpace)")
+            }
+            context.interpolationQuality = .none
+            context.setRenderingIntent(.perceptual)
+            context.setBlendMode(.copy)
+            context.draw(source, in: CGRect(x: 0, y: 0, width: output.width, height: output.height))
+        }
+        return output
     }
 
     /// Unconditional conversion (also used by tests to prove sRGB→sRGB is the identity).

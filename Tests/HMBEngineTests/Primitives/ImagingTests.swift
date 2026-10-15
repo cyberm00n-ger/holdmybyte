@@ -81,6 +81,20 @@ import Testing
         #expect(psnr < 60 && psnr > 15)
     }
 
+    /// The CoreGraphics fallback (used only when vImage refuses a profile) converts like the vImageConverter.
+    @Test func coreGraphicsFallbackMatchesVImageConversion() throws {
+        let decoder = ImageIODecoder()
+        let p3 = try decoder.decode(try decoder.inspect(TestFixtureFiles.rampsP3))
+        let viaVImage = try VImageProcessing.convert(p3, to: VImageProcessing.sRGB)
+        let viaCG = try VImageProcessing.convertWithCoreGraphics(p3, to: VImageProcessing.sRGB)
+        #expect(VImageProcessing.isSRGB(viaCG.colorSpace))
+        #expect(Measure.psnr(viaVImage, viaCG) > 40)
+        #expect(Measure.psnr(p3, viaCG) < 60)                    // it really converted
+        let srgb = Synthetic.image(.blocks, width: 101, height: 77)
+        let identity = try VImageProcessing.convertWithCoreGraphics(srgb, to: VImageProcessing.sRGB)
+        #expect(Measure.psnr(srgb, identity) > 48)
+    }
+
     @Test func mosaicLayout() throws {
         #expect(processing.mosaic(Synthetic.image(.waves, width: 2047, height: 1500)) == nil)
         #expect(processing.mosaic(Synthetic.image(.waves, width: 3000, height: 1023)) == nil)

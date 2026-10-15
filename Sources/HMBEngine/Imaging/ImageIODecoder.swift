@@ -13,10 +13,19 @@ public struct ImageIODecoder: ImageDecoding {
 
     public func inspect(_ url: URL) throws -> SourceInfo {
         let data: Data
-        do { data = try Data(contentsOf: url, options: .alwaysMapped) } catch {
+        do { data = try Data(contentsOf: url, options: Self.readingOptions(for: url)) } catch {
             throw PrimitiveError("cannot read \(url.lastPathComponent): \(error.localizedDescription)")
         }
         return try Self.inspect(data: data)
+    }
+
+    /// Memory-map only files on an internal, local volume. A mapped file on an external or network volume turns an
+    /// unplugged drive into SIGBUS at the next page touch (in the decoder, the JXL transcode or a keep-original
+    /// copy) instead of the read error that §3.8 maps to `.sourceUnavailable`; such files are read into memory
+    /// (about 20 MB per 45 MP JPEG). Unknown volumes count as external.
+    static func readingOptions(for url: URL) -> Data.ReadingOptions {
+        let values = try? url.resourceValues(forKeys: [.volumeIsInternalKey, .volumeIsLocalKey])
+        return values?.volumeIsInternal == true && values?.volumeIsLocal == true ? .alwaysMapped : []
     }
 
     /// Header-only inspection of encoded bytes (no pixel decode).
