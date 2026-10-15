@@ -1,17 +1,192 @@
-// WP0 stub; WP1 owns this file.
+// holdmybyte codec bridge: libjxl lossless JPEG transcode and byte-exact reconstruction (Docs/SPEC.md §3.6).
+// Owned by WP1. Single-threaded (no parallel runner): the engine runs one photo per worker thread, and a
+// single-threaded encoder is deterministic.
 #include "hmb_codecs.h"
-#include "stub_error.h"
+
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 #include <jxl/decode.h>
 #include <jxl/encode.h>
-#include <jxl/thread_parallel_runner.h>
 
-int hmb_jxl_transcode_jpeg(const uint8_t *, size_t, int, hmb_buffer *out, char *err, size_t err_len) {
-    if (out != nullptr) { out->data = nullptr; out->size = 0; }
-    return hmb_stub_error("hmb_jxl_transcode_jpeg", err, err_len);
+namespace {
+
+int fail(char *err, size_t err_len, const char *format, ...) {
+    if (err != nullptr && err_len > 0) {
+        va_list args;
+        va_start(args, format);
+        std::vsnprintf(err, err_len, format, args);
+        va_end(args);
+    }
+    return -1;
 }
 
-int hmb_jxl_reconstruct_jpeg(const uint8_t *, size_t, hmb_buffer *out, char *err, size_t err_len) {
-    if (out != nullptr) { out->data = nullptr; out->size = 0; }
-    return hmb_stub_error("hmb_jxl_reconstruct_jpeg", err, err_len);
+const char *encoder_error(JxlEncoderError code) {
+    switch (code) {
+        case JXL_ENC_ERR_OK: return "ok";
+        case JXL_ENC_ERR_GENERIC: return "generic error";
+        case JXL_ENC_ERR_OOM: return "out of memory";
+        case JXL_ENC_ERR_JBRD: return "JPEG bitstream reconstruction data cannot be represented";
+        case JXL_ENC_ERR_BAD_INPUT: return "bad input (not a JPEG libjxl can transcode)";
+        case JXL_ENC_ERR_NOT_SUPPORTED: return "not supported";
+        case JXL_ENC_ERR_API_USAGE: return "API usage error";
+        default: return "unknown error";
+    }
+}
+
+/// A growable malloc'ed byte buffer (plain struct: no destructors, explicit release).
+struct Growable {
+    uint8_t *data;
+    size_t capacity;
+    bool grow(size_t minimum) {
+        size_t next = capacity > 0 ? capacity : 1 << 16;
+        while (next < minimum) next *= 2;
+        uint8_t *bigger = static_cast<uint8_t *>(std::realloc(data, next));
+        if (bigger == nullptr) return false;
+        data = bigger;
+        capacity = next;
+        return true;
+    }
+};
+
+}  // namespace
+
+int hmb_jxl_transcode_jpeg(const uint8_t *jpeg, size_t size, int effort, hmb_buffer *out, char *err, size_t err_len) {
+    if (out == nullptr) return fail(err, err_len, "hmb_jxl_transcode_jpeg: out is NULL");
+    out->data = nullptr;
+    out->size = 0;
+    if (jpeg == nullptr || size < 4) return fail(err, err_len, "hmb_jxl_transcode_jpeg: input is empty");
+    if (effort < 1 || effort > 10) return fail(err, err_len, "hmb_jxl_transcode_jpeg: effort %d outside 1...10", effort);
+
+    JxlEncoder *encoder = JxlEncoderCreate(nullptr);
+    if (encoder == nullptr) return fail(err, err_len, "hmb_jxl_transcode_jpeg: out of memory (encoder)");
+    Growable buffer = {nullptr, 0};
+    int result = 0;
+    do {
+        if (JxlEncoderUseContainer(encoder, JXL_TRUE) != JXL_ENC_SUCCESS ||
+            JxlEncoderStoreJPEGMetadata(encoder, JXL_TRUE) != JXL_ENC_SUCCESS) {
+            result = fail(err, err_len, "hmb_jxl_transcode_jpeg: setup failed (%s)", encoder_error(JxlEncoderGetError(encoder)));
+            break;
+        }
+        JxlEncoderFrameSettings *settings = JxlEncoderFrameSettingsCreate(encoder, nullptr);
+        if (settings == nullptr ||
+            JxlEncoderFrameSettingsSetOption(settings, JXL_ENC_FRAME_SETTING_EFFORT, effort) != JXL_ENC_SUCCESS) {
+            result = fail(err, err_len, "hmb_jxl_transcode_jpeg: frame settings failed (%s)", encoder_error(JxlEncoderGetError(encoder)));
+            break;
+        }
+        if (JxlEncoderAddJPEGFrame(settings, jpeg, size) != JXL_ENC_SUCCESS) {
+            result = fail(err, err_len, "hmb_jxl_transcode_jpeg: %s", encoder_error(JxlEncoderGetError(encoder)));
+            break;
+        }
+        JxlEncoderCloseInput(encoder);
+        if (!buffer.grow(size / 2 + 4096)) {
+            result = fail(err, err_len, "hmb_jxl_transcode_jpeg: out of memory");
+            break;
+        }
+        size_t used = 0;
+        for (;;) {
+            uint8_t *next = buffer.data + used;
+            size_t available = buffer.capacity - used;
+            const JxlEncoderStatus status = JxlEncoderProcessOutput(encoder, &next, &available);
+            used = static_cast<size_t>(next - buffer.data);
+            if (status == JXL_ENC_SUCCESS) break;
+            if (status == JXL_ENC_NEED_MORE_OUTPUT) {
+                if (!buffer.grow(buffer.capacity * 2)) {
+                    result = fail(err, err_len, "hmb_jxl_transcode_jpeg: out of memory");
+                    break;
+                }
+                continue;
+            }
+            result = fail(err, err_len, "hmb_jxl_transcode_jpeg: %s", encoder_error(JxlEncoderGetError(encoder)));
+            break;
+        }
+        if (result != 0) break;
+        out->data = buffer.data;
+        out->size = used;
+        buffer.data = nullptr;
+    } while (false);
+    std::free(buffer.data);
+    JxlEncoderDestroy(encoder);
+    return result;
+}
+
+int hmb_jxl_reconstruct_jpeg(const uint8_t *jxl, size_t size, hmb_buffer *out, char *err, size_t err_len) {
+    if (out == nullptr) return fail(err, err_len, "hmb_jxl_reconstruct_jpeg: out is NULL");
+    out->data = nullptr;
+    out->size = 0;
+    if (jxl == nullptr || size == 0) return fail(err, err_len, "hmb_jxl_reconstruct_jpeg: input is empty");
+
+    JxlDecoder *decoder = JxlDecoderCreate(nullptr);
+    if (decoder == nullptr) return fail(err, err_len, "hmb_jxl_reconstruct_jpeg: out of memory (decoder)");
+    Growable buffer = {nullptr, 0};
+    size_t used = 0;
+    bool reconstructing = false;
+    int result = 0;
+    do {
+        if (JxlDecoderSubscribeEvents(decoder, JXL_DEC_JPEG_RECONSTRUCTION | JXL_DEC_FULL_IMAGE) != JXL_DEC_SUCCESS ||
+            JxlDecoderSetInput(decoder, jxl, size) != JXL_DEC_SUCCESS) {
+            result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: decoder setup failed");
+            break;
+        }
+        JxlDecoderCloseInput(decoder);
+        bool done = false;
+        while (!done && result == 0) {
+            const JxlDecoderStatus status = JxlDecoderProcessInput(decoder);
+            switch (status) {
+                case JXL_DEC_JPEG_RECONSTRUCTION:
+                    if (!buffer.grow(size + size / 2 + 4096)) {
+                        result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: out of memory");
+                        break;
+                    }
+                    if (JxlDecoderSetJPEGBuffer(decoder, buffer.data, buffer.capacity) != JXL_DEC_SUCCESS) {
+                        result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: could not set the JPEG buffer");
+                        break;
+                    }
+                    reconstructing = true;
+                    break;
+                case JXL_DEC_JPEG_NEED_MORE_OUTPUT: {
+                    used = buffer.capacity - JxlDecoderReleaseJPEGBuffer(decoder);
+                    if (!buffer.grow(buffer.capacity * 2)) {
+                        result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: out of memory");
+                        break;
+                    }
+                    if (JxlDecoderSetJPEGBuffer(decoder, buffer.data + used, buffer.capacity - used) != JXL_DEC_SUCCESS) {
+                        result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: could not grow the JPEG buffer");
+                    }
+                    break;
+                }
+                case JXL_DEC_FULL_IMAGE:
+                    if (!reconstructing) result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: the file carries no JPEG reconstruction data");
+                    break;
+                case JXL_DEC_NEED_IMAGE_OUT_BUFFER:
+                    result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: the file carries no JPEG reconstruction data");
+                    break;
+                case JXL_DEC_SUCCESS:
+                    done = true;
+                    break;
+                case JXL_DEC_NEED_MORE_INPUT:
+                    result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: truncated input");
+                    break;
+                case JXL_DEC_ERROR:
+                    result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: decoding failed (corrupt or unsupported file)");
+                    break;
+                default:
+                    break;   // informational events we did not subscribe to
+            }
+        }
+        if (result != 0) break;
+        if (!reconstructing) {
+            result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: the file carries no JPEG reconstruction data");
+            break;
+        }
+        used = buffer.capacity - JxlDecoderReleaseJPEGBuffer(decoder);
+        out->data = buffer.data;
+        out->size = used;
+        buffer.data = nullptr;
+    } while (false);
+    std::free(buffer.data);
+    JxlDecoderDestroy(decoder);
+    return result;
 }
