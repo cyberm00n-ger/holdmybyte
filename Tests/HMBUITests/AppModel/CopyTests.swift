@@ -179,6 +179,9 @@ import Testing
         Case(Copy.Done.issuesOnly, "Issues Only"),
         Case(Copy.Done.cellCaption(fraction: 0.88, score: 85.4, locale: de), "−88\u{00A0}% · 85,4"),
         Case(Copy.Done.cellCaption(fraction: 0.88, score: 85.4, locale: us), "−88% · 85.4"),
+        // Titles wrap around a quoted name, never inside it.
+        Case(Copy.keepingQuotesTogether("Couldn’t compress “Finn und Lissy”"), "Couldn’t compress “Finn\u{00A0}und\u{00A0}Lissy”"),
+        Case(Copy.keepingQuotesTogether("Remove “A B” from “C D”?"), "Remove “A\u{00A0}B” from “C\u{00A0}D”?"),
         // Scores follow the locale like the sizes beside them (one decimal, no grouping).
         Case(HMBFormat.score(85.44, locale: de), "85,4"),
         Case(HMBFormat.score(85.44, locale: us), "85.4"),
