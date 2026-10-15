@@ -5,7 +5,7 @@
 //   HMB_SNAPSHOT_APPEARANCE  light | dark | both                  (default both)
 //   HMB_SNAPSHOT_SIZE        WIDTHxHEIGHT                         (default 1120x780)
 //   HMB_SNAPSHOT_LOCALE      locale identifier                    (default en_DE)
-//   HMB_SNAPSHOT_SETTLE      seconds per render before capture    (default 0.45)
+//   HMB_SNAPSHOT_SETTLE      seconds per render before capture    (default 0.7)
 //   HMB_FIXTURE_PHOTOS       optional folder of local photos used as thumbnails
 //
 //   hmb-snapshot --list               print the catalogue ids
@@ -80,7 +80,7 @@ let windowSize: CGSize = {
     return CGSize(width: parts[0], height: parts[1])
 }()
 
-let settleSeconds = environment["HMB_SNAPSHOT_SETTLE"].flatMap(Double.init) ?? 0.45
+let settleSeconds = environment["HMB_SNAPSHOT_SETTLE"].flatMap(Double.init) ?? 0.7
 let outputDirectory = URL(fileURLWithPath: environment["HMB_SNAPSHOT_DIR"].flatMap { $0.isEmpty ? nil : $0 } ?? "Snapshots",
                           isDirectory: true).standardizedFileURL
 
@@ -146,6 +146,7 @@ for entry in entries {
                 record.error = "\(error)"
             }
             record.milliseconds = Int(Date().timeIntervalSince(t0) * 1000)
+            record.ok = record.error == nil && !record.blank
             images.append(record)
             let status = record.error.map { "FAILED (\($0))" } ?? (record.blank ? "BLANK" : "ok")
             print("\(name)  \(record.size)  \(record.milliseconds) ms  \(status)")

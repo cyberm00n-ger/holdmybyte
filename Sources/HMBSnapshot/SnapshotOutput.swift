@@ -68,7 +68,8 @@ struct SnapshotManifest: Codable {
         var blank: Bool
         var error: String?
         var milliseconds: Int
-        var ok: Bool { error == nil && !blank }
+        /// Rendered and not blank.
+        var ok = false
     }
 
     var run: Run
