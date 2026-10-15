@@ -17,13 +17,14 @@ public struct RootView: View {
         } detail: {
             NavigationStack(path: model.detailPathBinding) {
                 DetailRouter()
-                    .navigationDestination(for: CompareRoute.self) { _ in CompareView(model: model) }
+                    .navigationDestination(for: CompareRoute.self) { CompareView(model: model, route: $0) }
             }
             .navigationSplitViewColumnWidth(min: Tokens.Layout.windowMinimum.width - 260, ideal: 860)
         }
         .searchable(text: model.searchBinding, placement: .sidebar, prompt: Text(Copy.Sidebar.searchPrompt))
         .searchFocused($searchFocused)
         .onChange(of: model.searchFocusRequest) { searchFocused = true }
+        .onChange(of: searchFocused) { _, focused in model.textInputActive = focused }
         .frame(minWidth: Tokens.Layout.windowMinimum.width, minHeight: Tokens.Layout.windowMinimum.height)
         .onDrop(of: [.fileURL], delegate: WindowDropDelegate(model: model))
         .overlay(alignment: .bottom) {
@@ -37,9 +38,7 @@ public struct RootView: View {
         .sheet(item: renameBinding) { item in
             RenameSheet(model: model, wedding: item.id)
         }
-        .sheet(item: editDeliveryBinding) { item in
-            EditDeliverySheetHost(model: model, preset: item.preset, isNew: item.isNew)
-        }
+        .editDeliverySheet(model: model)
         .environment(model)
         .hmbAccent()
         .onAppear { model.windowDidAppear() }
@@ -47,18 +46,11 @@ public struct RootView: View {
     }
 
     private struct RenameItem: Identifiable { let id: WeddingID }
-    private struct EditItem: Identifiable { let preset: DeliveryPreset; let isNew: Bool; var id: DeliveryID { preset.id } }
 
     private var renameBinding: Binding<RenameItem?> {
         Binding(get: {
             if case .renameWedding(let id) = model.state.sheet { RenameItem(id: id) } else { nil }
         }, set: { if $0 == nil, case .renameWedding = model.state.sheet { model.state.sheet = nil } })
-    }
-
-    private var editDeliveryBinding: Binding<EditItem?> {
-        Binding(get: {
-            if case .editDelivery(let preset, let isNew) = model.state.sheet { EditItem(preset: preset, isNew: isNew) } else { nil }
-        }, set: { if $0 == nil, case .editDelivery = model.state.sheet { model.state.sheet = nil } })
     }
 }
 

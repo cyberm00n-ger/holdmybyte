@@ -270,6 +270,7 @@ struct DeliverySettingsRow: View {
 
 struct AdvancedSettingsTab: View {
     @Bindable var model: AppModel
+    @Environment(\.locale) private var locale
     @State private var confirmingClear = false
     @State private var estimatesReset = false
 
@@ -304,19 +305,21 @@ struct AdvancedSettingsTab: View {
             }
         }
         .modifier(SettingsTabHeight())
-        .alert(SettingsCopy.clearHistoryTitle(model.clearableHistoryCount), isPresented: $confirmingClear) {
-            Button("Clear", role: .destructive) { model.clearHistory() }
-            Button("Cancel", role: .cancel) {}
+        // Settings presents Clear History itself (the main window's AlertPresenter leaves `.clearHistory` out), with
+        // the copy from `AppAlert.copy`, the single source of alert copy.
+        .alert(SettingsCopy.clearHistoryTitle(in: model.state, locale: locale), isPresented: $confirmingClear) {
+            Button(AppAlert.clearHistory.copy(in: model.state, locale: locale).buttons[0], role: .destructive) { model.clearHistory() }
+            Button(AppAlert.clearHistory.copy(in: model.state, locale: locale).buttons[1], role: .cancel) {}
         } message: {
-            Text(SettingsCopy.clearHistoryMessage)
+            Text(AppAlert.clearHistory.copy(in: model.state, locale: locale).message)
         }
     }
 }
 
 enum SettingsCopy {
-    /// "Clear the history of all 38 weddings?" ("of 1 wedding" for one).
-    static func clearHistoryTitle(_ count: Int) -> String {
-        count == 1 ? "Clear the history of 1 wedding?" : "Clear the history of all \(count) weddings?"
+    /// "Clear the history of all 38 weddings?" ("of 1 wedding" for one): `AppAlert.clearHistory`'s title.
+    static func clearHistoryTitle(in state: AppState, locale: Locale) -> String {
+        AppAlert.clearHistory.copy(in: state, locale: locale).title
     }
 
     static let clearHistoryMessage = "Delivered photos are not touched."

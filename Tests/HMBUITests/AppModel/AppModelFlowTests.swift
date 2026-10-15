@@ -161,7 +161,8 @@ import Testing
     }
 
     @Test func startNowInsteadPausesTheCurrentJob() async throws {
-        let h = Harness(TestData.configuration(secondsPerPhoto: 0.004))
+        // 1.2 s per job: the pause must reach the job before it ends, also with the whole suite running under load.
+        let h = Harness(TestData.configuration(secondsPerPhoto: 0.03))
         let a = try await h.dropAndStart()
         let b = try await h.dropAndStart()
         h.model.startNow(b)
@@ -179,7 +180,8 @@ import Testing
     // MARK: pause / resume / stop
 
     @Test func pauseResumeStop() async throws {
-        let h = Harness(TestData.configuration(secondsPerPhoto: 0.004))
+        // 1.2 s per job: the pause must reach the job before it ends, also with the whole suite running under load.
+        let h = Harness(TestData.configuration(secondsPerPhoto: 0.03))
         let id = try await h.dropAndStart()
         try await waitUntil("progress") { (h.model.state.live[id]?.photosDone ?? 0) > 2 }
         h.model.pause(id)

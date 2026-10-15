@@ -121,10 +121,10 @@ struct CompareDivider: View {
     var body: some View {
         ZStack {
             Rectangle()
-                .fill(CompareStyle.dividerLine)
+                .fill(Tokens.Palette.compareDivider)
                 .frame(width: 1.5)
-                .shadow(color: CompareStyle.dividerShadow, radius: 0, x: 0.5, y: 0)
-                .shadow(color: CompareStyle.dividerShadow, radius: 0, x: -0.5, y: 0)
+                .shadow(color: Tokens.Palette.compareDividerShadow, radius: 0, x: 0.5, y: 0)
+                .shadow(color: Tokens.Palette.compareDividerShadow, radius: 0, x: -0.5, y: 0)
                 .allowsHitTesting(false)
             Image(systemName: "arrow.left.and.right")
                 .font(.system(size: 12, weight: .semibold))
@@ -150,11 +150,4 @@ struct CompareDivider: View {
         .frame(width: 30, height: height)
         .position(x: x, y: height / 2)
     }
-}
-
-/// The divider's fixed colours (§2.4 S14: "a 1.5 pt white line with a 0.5 pt dark shadow"). Tokens.swift is frozen,
-/// so they live here; WP4-NOTES asks the lead to move them into `Tokens.Palette`.
-enum CompareStyle {
-    static let dividerLine = Color.white
-    static let dividerShadow = Color.black.opacity(0.6)
 }

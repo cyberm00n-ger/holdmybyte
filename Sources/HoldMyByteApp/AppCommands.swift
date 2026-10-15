@@ -15,7 +15,10 @@ struct AppCommands: Commands {
                 model.newWedding()
             }
             .keyboardShortcut("n")
-            Button(Copy.Empty.choosePhotos) { model.choosePhotos() }
+            Button(Copy.Empty.choosePhotos) {
+                openWindow(id: WindowID.main)                    // the setup needs a window to show in
+                model.choosePhotos()
+            }
                 .keyboardShortcut("o")
             Divider()
             Button(Copy.Toolbar.showInFinder) { if let record = selected { model.revealInFinder(record.id, delivery: nil) } }
@@ -23,9 +26,14 @@ struct AppCommands: Commands {
                 .disabled(!canReveal)
         }
 
-        CommandGroup(after: .textEditing) {
-            Button("Find") { model.focusSearch() }
-                .keyboardShortcut("f")
+        // Replaces the text-editing group (Find submenu, spelling, substitutions): its own ⌘F "Find…" would compete
+        // with this one, and the app has no text documents.
+        CommandGroup(replacing: .textEditing) {
+            Button("Find") {
+                openWindow(id: WindowID.main)
+                model.focusSearch()
+            }
+            .keyboardShortcut("f")
         }
 
         SidebarCommands()
@@ -127,48 +135,60 @@ struct AppCommands: Commands {
     }
 
     private var canRemove: Bool {
-        guard let record = selected, model.state.draft == nil else { return false }
+        // ⌘⌫ also deletes to the start of the line in the search field: never take it from there.
+        guard let record = selected, model.state.draft == nil, !model.textInputActive else { return false }
         return record.phase != .running
     }
 }
 
-/// View ▸ Comparison (§2.8). Calls WP4's Compare API; enabled only while Compare is open.
+/// View ▸ Comparison (§2.8). Calls WP4's Compare API (which keeps Compare's rules: no Split, Show Original or
+/// Differences without the original). The single-letter and arrow keys are enabled only while Compare has the keys
+/// (`compareKeysActive`), so they never take typing from a text field, a sheet or another window; when Compare has
+/// them, its own key handling sees them first and these items are what the menu shows.
 struct ComparisonMenu: View {
     let model: AppModel
 
     var body: some View {
-        let active = model.state.compare != nil
+        let open = model.state.compare != nil
+        let keys = model.compareKeysActive
+        let compare = model.state.compare
         Menu("Comparison") {
-            Button("Split") { model.updateCompare { $0.mode = .split } }
-            Button("Side by Side") { model.updateCompare { $0.mode = .sideBySide } }
-            Button("Toggle Split / Side by Side") {
-                model.updateCompare { $0.mode = $0.mode == .split ? .sideBySide : .split }
-            }
-            .keyboardShortcut("y", modifiers: [])
+            Button("Split") { if compare?.mode != .split { model.toggleCompareMode() } }
+                .disabled(compare?.canSplit != true)
+            Button("Side by Side") { if compare?.mode != .sideBySide { model.toggleCompareMode() } }
+                .disabled(compare?.canSplit != true)
+            Button("Toggle Split / Side by Side") { model.toggleCompareMode() }
+                .keyboardShortcut("y", modifiers: [])
+                .disabled(!keys || compare?.canSplit != true)
             Divider()
             // `\` is not a key equivalent here: holding it is handled by Compare itself (key down/up).
-            Button("Show Original (hold \\)") {
-                model.updateCompare { $0.originalLatched.toggle(); $0.showsOriginal = $0.originalLatched }
-            }
-            Button("Fit / 100 %") { model.updateCompare { $0.zoom = $0.zoom == .fit ? .actual : .fit } }
+            Button("Show Original (hold \\)") { model.toggleCompareOriginalLatch() }
+                .disabled(compare?.canShowOriginal != true)
+            Button("Fit / 100 %") { model.toggleCompareZoom() }
                 .keyboardShortcut("z", modifiers: [])
-            Button("Zoom In") { model.updateCompare { $0.zoom = .actual } }
+                .disabled(!keys)
+            Button("Zoom In") { if compare?.zoom == .fit { model.toggleCompareZoom() } }
                 .keyboardShortcut("+")
-            Button("Zoom Out") { model.updateCompare { $0.zoom = .fit } }
+                .disabled(!open || compare?.zoom != .fit)
+            Button("Zoom Out") { if compare?.zoom != .fit { model.toggleCompareZoom() } }
                 .keyboardShortcut("-")
-            Button("Show Differences") { model.updateCompare { $0.showsDifferences.toggle() } }
+                .disabled(!open || compare?.zoom == .fit)
+            Button("Show Differences") { model.toggleCompareDifferences() }
                 .keyboardShortcut("d", modifiers: [])
-            Button("Inspector") { model.updateCompare { $0.showsInspector.toggle() } }
+                .disabled(!keys || compare?.canShowDifferences != true)
+            Button("Inspector") { model.toggleCompareInspector() }
                 .keyboardShortcut("i", modifiers: [.command, .option])
             Divider()
             Button("Next Photo") { model.stepCompare(by: 1) }
                 .keyboardShortcut(.rightArrow, modifiers: [])
+                .disabled(!keys)
             Button("Previous Photo") { model.stepCompare(by: -1) }
                 .keyboardShortcut(.leftArrow, modifiers: [])
+                .disabled(!keys)
             Divider()
             Button("Back") { model.closeCompare() }
                 .keyboardShortcut("[")
         }
-        .disabled(!active)
+        .disabled(!open)
     }
 }

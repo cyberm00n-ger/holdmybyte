@@ -77,6 +77,13 @@ extension AppModel {
 
     // MARK: Additions (WP4) — used by CompareView and available to AppCommands (WP3)
 
+    /// Compare's single-letter and arrow keys (also as menu key equivalents) apply: Compare is open in the key
+    /// window, no sheet or alert is up, and no text field is being edited. Otherwise the keys go to whatever has
+    /// focus (typing "d" in the search field never toggles Differences).
+    public var compareKeysActive: Bool {
+        state.compare != nil && state.sheet == nil && state.alert == nil && !textInputActive && compareWindowIsKey
+    }
+
     /// The record Compare shows.
     public var compareRecord: WeddingRecord? {
         guard let id = state.compare?.route.wedding else { return nil }

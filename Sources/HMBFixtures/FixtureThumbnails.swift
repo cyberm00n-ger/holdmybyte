@@ -39,10 +39,13 @@ public final class FixtureThumbnails: ThumbnailProviding {
     /// Synchronous variant (always succeeds for synthetic images).
     public func image(for photo: SourcePhoto, maxPixelSize: Int) -> SendableImage {
         let size = max(16, maxPixelSize)
-        let key = CacheKey(index: photo.id.index, seed: FixtureRandom.seed(photo.relativePath), maxPixelSize: size)
+        // Seeded by the full path: every wedding's first photo is DSC00001.jpg, so the relative path alone gave all
+        // history covers the same image.
+        let key = CacheKey(index: photo.id.index, seed: FixtureRandom.seed(photo.url.path), maxPixelSize: size)
         if let cached = cache.withLock({ $0[key] }) { return cached }
         let image: SendableImage
-        if !realPhotos.isEmpty, let real = Self.realThumbnail(realPhotos[photo.id.index % realPhotos.count], maxPixelSize: size) {
+        if !realPhotos.isEmpty,
+           let real = Self.realThumbnail(realPhotos[Int((key.seed % 9973) + UInt64(photo.id.index)) % realPhotos.count], maxPixelSize: size) {
             image = real
         } else {
             let edge = Double(max(photo.pixelWidth, photo.pixelHeight, 1))
@@ -86,7 +89,8 @@ public final class FixtureThumbnails: ThumbnailProviding {
         let bottom = color(hue + random.uniform(-0.03...0.01), random.uniform(0.35...0.6), random.uniform(0.18...0.40))
         let gradient = CGGradient(colorsSpace: space, colors: [top, middle, bottom] as CFArray,
                                   locations: [0, CGFloat(random.uniform(0.35...0.6)), 1])!
-        context.drawLinearGradient(gradient, start: CGPoint(x: w * 0.4, y: h), end: CGPoint(x: w * 0.6, y: 0), options: [])
+        context.drawLinearGradient(gradient, start: CGPoint(x: w * 0.4, y: h), end: CGPoint(x: w * 0.6, y: 0),
+                                   options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
 
         // Glow (sun, window light).
         let glowCenter = CGPoint(x: w * random.uniform(0.15...0.85), y: h * random.uniform(0.45...0.85))

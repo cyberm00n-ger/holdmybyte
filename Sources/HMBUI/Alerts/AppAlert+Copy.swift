@@ -33,7 +33,7 @@ extension AppAlert {
                     ["Remove", "Cancel"])
         case .clearHistory:
             let count = state.records.filter { !$0.phase.isInProgress }.count
-            let weddings = count == 1 ? "the 1 wedding" : "all \(count.formatted(.number.locale(locale))) weddings"
+            let weddings = count == 1 ? "1 wedding" : "all \(count.formatted(.number.locale(locale))) weddings"
             return ("Clear the history of \(weddings)?", "Delivered photos are not touched.", ["Clear", "Cancel"])
         }
     }

@@ -228,17 +228,28 @@ struct DeliveryTiles: View {
     let record: WeddingRecord
     let presentation: WeddingPresentation
     let folderMissing: Bool
+    @State private var width: CGFloat = Tokens.Layout.doneHeaderMaxWidth
+
+    nonisolated static let minimumTileWidth: CGFloat = 220
 
     var body: some View {
-        // A single delivery spans the full width (an adaptive column would leave it at one column's width).
-        let columns = record.deliveries.count == 1
-            ? [GridItem(.flexible())]
-            : [GridItem(.adaptive(minimum: 220), spacing: Tokens.Spacing.s12)]
-        LazyVGrid(columns: columns, spacing: Tokens.Spacing.s12) {
+        let count = Self.columnCount(tiles: record.deliveries.count, width: width)
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Tokens.Spacing.s12), count: count),
+                  spacing: Tokens.Spacing.s12) {
             ForEach(record.deliveries) { preset in
                 DeliveryTile(record: record, preset: preset, summary: presentation.summary(preset), folderMissing: folderMissing)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+
+    /// Tiles are at least 220 wide (§2.4 S10) and fill the row: one delivery spans the full width, two share it, and
+    /// rows stay balanced (four tiles that do not fit in one row become 2 × 2, never 3 + 1).
+    nonisolated static func columnCount(tiles: Int, width: CGFloat) -> Int {
+        guard tiles > 0 else { return 1 }
+        let fitting = max(1, Int((width + Tokens.Spacing.s12) / (minimumTileWidth + Tokens.Spacing.s12)))
+        let rows = (tiles + fitting - 1) / fitting
+        return (tiles + rows - 1) / rows
     }
 }
 
@@ -266,8 +277,8 @@ struct DeliveryTile: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                .lineLimit(2)                                   // wraps in narrow tiles; numbers are never truncated
+                .fixedSize(horizontal: false, vertical: true)
             if preset.isFullSize { SizeBar(source: summary.sourceBytes, output: summary.outputBytes) }
             if summary.keptOriginal > 0, preset.isLossy {
                 Text(Copy.Done.keptOriginal(summary.keptOriginal, locale: locale))
@@ -518,9 +529,18 @@ struct ScoreHistogram: View {
         return counts.keys.sorted().map { Bin(start: $0, count: counts[$0] ?? 0) }
     }
 
-    static func ticks(lo: Double, hi: Double) -> [Double] {
-        let a = (lo + 0.5).rounded(), c = (hi - 0.5).rounded()
-        return [a, ((a + c) / 2).rounded(), c]
+    /// Three ticks inside the domain (half a point in from each end): whole points when the span allows, else
+    /// half points. Rounding to nearest could push the last tick onto the domain's edge, where Charts drops it.
+    nonisolated static func ticks(lo: Double, hi: Double) -> [Double] {
+        var a = (lo + 0.5).rounded(.up), c = (hi - 0.5).rounded(.down)
+        var mid = ((a + c) / 2).rounded()
+        if c - a < 2 {
+            a = ((lo + 0.5) * 2).rounded(.up) / 2
+            c = ((hi - 0.5) * 2).rounded(.down) / 2
+            mid = (a + c).rounded() / 2
+        }
+        guard c > a else { return [a] }
+        return mid > a && mid < c ? [a, mid, c] : [a, c]
     }
 }
 

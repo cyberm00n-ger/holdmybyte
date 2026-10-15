@@ -15,6 +15,7 @@
 // Exit status: 0 when every image rendered and none is blank; 1 otherwise; 64 for usage errors.
 import AppKit
 import Foundation
+import HMBUI
 
 let environment = ProcessInfo.processInfo.environment
 
@@ -102,6 +103,7 @@ do {
 
 let app = NSApplication.shared
 app.setActivationPolicy(.prohibited)
+Tokens.forcesMulticolorAccent = true          // the shipped teal accent, whatever the rendering Mac's accent is
 app.applicationIconImage = AppIconArt.image(pointSize: 128)
 ActiveWindowAppearance.force()
 

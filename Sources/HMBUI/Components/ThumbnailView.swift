@@ -29,6 +29,9 @@ enum ThumbnailSize {
 struct ThumbnailView: View {
     let photo: SourcePhoto?
     var pixelSize: Int = ThumbnailSize.grid
+    /// The cell shows the photo without colour (queued/working). The live view uses `.saturation(0)` around the
+    /// thumbnail; offscreen snapshots cannot draw that filter, so they get a greyscale image instead.
+    var monochrome = false
     @Environment(AppModel.self) private var model
     @Environment(\.isSnapshotRendering) private var isSnapshotRendering
     @State private var loaded: CGImage?
@@ -37,7 +40,7 @@ struct ThumbnailView: View {
         Color.clear
             .background(.fill.tertiary)
             .overlay {
-                if let image = currentImage {
+                if let image = currentImage.map({ isSnapshotRendering && monochrome ? Self.greyscale($0) : $0 }) {
                     Image(decorative: image, scale: 1)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
@@ -59,6 +62,13 @@ struct ThumbnailView: View {
             return image
         }
         return nil
+    }
+
+    static func greyscale(_ image: CGImage) -> CGImage {
+        guard let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return image }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return context.makeImage() ?? image
     }
 
     private func load() async {

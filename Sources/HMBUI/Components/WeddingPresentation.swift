@@ -34,7 +34,7 @@ public final class WeddingPresentation {
     public static func of(_ record: WeddingRecord) -> WeddingPresentation {
         guard record.phase == .finished else { return WeddingPresentation(record) }
         let key = CacheKey(id: record.id, results: record.results.count, finishedAt: record.finishedAt,
-                           deliveries: record.deliveries.map(\.id), name: record.name)
+                           deliveries: record.deliveries.map(\.id), name: record.name, digest: Self.digest(record.results))
         if let hit = cache[key] { return hit }
         let presentation = WeddingPresentation(record)
         if cache.count > 16 { cache.removeAll() }
@@ -44,6 +44,20 @@ public final class WeddingPresentation {
 
     private struct CacheKey: Hashable {
         var id: WeddingID; var results: Int; var finishedAt: Date?; var deliveries: [DeliveryID]; var name: String
+        var digest: Int
+    }
+
+    /// What the presentation is computed from, beyond the count: two records with the same id, count and finish time
+    /// but different outcomes (a relinked or merged record, or snapshot fixtures) must not share a presentation.
+    /// One pass over the results; far cheaper than the summaries it protects.
+    static func digest(_ results: [PhotoResult]) -> Int {
+        var hasher = Hasher()
+        for result in results {
+            hasher.combine(result.status)
+            hasher.combine(result.outBytes)
+            hasher.combine(result.score)
+        }
+        return hasher.finalize()
     }
     @MainActor private static var cache: [CacheKey: WeddingPresentation] = [:]
 

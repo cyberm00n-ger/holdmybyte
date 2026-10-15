@@ -85,7 +85,9 @@ struct RunHeader: View {
             }
             ProgressView(value: progress.fraction)
                 .progressViewStyle(.linear)
-                .tint(running ? nil : Color.secondary)
+                // Paused/stopped/interrupted: `.secondary`. Never `.tint(nil)`, which resets to the system accent
+                // instead of keeping the app's tint.
+                .modifier(SecondaryTint(active: !running))
                 .accessibilityLabel(Copy.Run.title(record.name))
                 .accessibilityValue("\(Int((progress.fraction * 100).rounded())) percent")
         }
@@ -194,5 +196,13 @@ struct DeliveryStrip: View {
             }
         }
         .scrollIndicators(.never)
+    }
+}
+
+/// `.tint(.secondary)` when `active`; otherwise the inherited tint stays.
+struct SecondaryTint: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        if active { content.tint(.secondary) } else { content }
     }
 }

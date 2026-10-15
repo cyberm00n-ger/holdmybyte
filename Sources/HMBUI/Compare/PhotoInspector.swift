@@ -21,7 +21,8 @@ struct PhotoInspector: View {
                         .font(.headline).lineLimit(1).truncationMode(.middle)
                         .help(photo.url.lastPathComponent)
                     if let captured = photo.captureDate {
-                        Text("Captured \(captured.formatted(.dateTime.month(.wide).day().year().locale(Locale(identifier: "en_US")))) at \(captured.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).locale(Locale(identifier: "en_GB"))))")
+                        // Same date style as the rest of the UI (English month names, the region's order: Copy.longDate).
+                        Text("Captured \(Copy.longDate(captured, locale: locale)) at \(captured.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).locale(Locale(identifier: "en_GB"))))")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
