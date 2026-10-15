@@ -24,7 +24,7 @@ import Testing
         defer { if !Self.keepsOutput { try? FileManager.default.removeItem(at: Self.outputDirectory) } }
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
             let model = try #require(WP4StateCatalogue.model(id))
-            let view = try #require(await WP4StateCatalogue.view(id, model: model))
+            let view = try #require(await WP4StateCatalogue.view(id, model: model, maxPixelSize: 1600))
             let size: CGSize? = switch id {
             case let id where id.hasPrefix("compare"): Tokens.Layout.windowDefault
             case "edit-delivery": EditDeliverySheet.size

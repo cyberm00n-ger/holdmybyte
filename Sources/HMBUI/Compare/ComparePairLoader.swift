@@ -94,7 +94,8 @@ final class ComparePairLoader {
                 guard let self, self.key == key, self.stage == nil, let image else { return }
                 self.placeholder = image
                 self.stage = .placeholder
-                self.timings?.placeholder = ContinuousClock.now - (self.timings?.requested ?? .now)
+                let elapsed = self.elapsed()
+                self.timings?.placeholder = elapsed
             }
         }
         loadTask = Task { [weak self] in
@@ -113,14 +114,16 @@ final class ComparePairLoader {
                 if (stage ?? .placeholder) < .screen {
                     pair = screen
                     stage = .screen
-                    timings?.screen = ContinuousClock.now - (timings?.requested ?? .now)
+                    let elapsed = elapsed()
+                    timings?.screen = elapsed
                 }
             }
             let full = try await engine.comparePair(record: record, photo: key.photo, delivery: key.delivery, maxPixelSize: nil)
             guard self.key == key, !Task.isCancelled else { return }
             pair = full
             stage = .full
-            timings?.full = ContinuousClock.now - (timings?.requested ?? .now)
+            let elapsed = elapsed()
+            timings?.full = elapsed
         } catch is CancellationError {
         } catch {
             guard self.key == key else { return }
@@ -172,6 +175,12 @@ final class ComparePairLoader {
             self.isComputingDifferences = false
             self.differencesKey = nil
         }
+    }
+
+    /// Time since the current load was requested.
+    private func elapsed() -> Duration {
+        guard let requested = timings?.requested else { return .zero }
+        return ContinuousClock.now - requested
     }
 
     func cancel() {

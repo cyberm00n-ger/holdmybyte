@@ -17,8 +17,11 @@ enum CompareDifferences {
 
     /// The differences image at the original's pixel size. `tint` is an sRGB colour (the accent).
     static func image(original: CGImage, delivered: CGImage, tint: (red: CGFloat, green: CGFloat, blue: CGFloat)) -> CGImage? {
-        let base = CIImage(cgImage: original)
-        var top = CIImage(cgImage: delivered)
+        // Photos are opaque; flatten anyway so transparent pixels (PNG sources, synthetic fixtures) compare as black.
+        let rawBase = CIImage(cgImage: original)
+        let black = CIImage(color: .black).cropped(to: rawBase.extent)
+        let base = rawBase.composited(over: black)
+        var top = CIImage(cgImage: delivered).composited(over: CIImage(color: .black).cropped(to: CIImage(cgImage: delivered).extent))
         if top.extent.size != base.extent.size, top.extent.width > 0, top.extent.height > 0 {
             top = top.transformed(by: CGAffineTransform(scaleX: base.extent.width / top.extent.width,
                                                         y: base.extent.height / top.extent.height))
@@ -44,7 +47,7 @@ enum CompareDifferences {
                 "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
             ])
         let composite = overlay.composited(over: darkened)
-        return context.createCGImage(composite, from: base.extent, format: .RGBA8,
+        return context.createCGImage(composite, from: rawBase.extent, format: .RGBA8,
                                      colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
     }
 

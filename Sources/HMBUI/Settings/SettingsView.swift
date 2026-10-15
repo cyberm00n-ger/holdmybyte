@@ -216,11 +216,16 @@ struct DeliveriesSettingsTab: View {
                     Button("Edit…") { if let selected { editing = EditingPreset(preset: selected, isNew: false) } }
                         .disabled(selected == nil)
                     Spacer()
-                    Button("Restore Default Deliveries") { model.restoreDefaultDeliveries() }
                 }
             } footer: {
-                Text("Checked deliveries are used for new weddings. Drag to reorder; the order sets ⌘1…⌘9.")
+                Text("Checked deliveries are used for new weddings.")
                     .font(.callout).foregroundStyle(.secondary)
+            }
+            Section {
+                HStack {
+                    Button("Restore Default Deliveries") { model.restoreDefaultDeliveries() }
+                    Spacer()
+                }
             }
         }
         .modifier(SettingsTabHeight())
@@ -290,9 +295,6 @@ struct AdvancedSettingsTab: View {
                         }
                     }
                 }
-            } footer: {
-                Text("holdmybyte learns how large deliveries turn out on your photos and refines its estimates.")
-                    .font(.callout).foregroundStyle(.secondary)
             }
             Section {
                 LabeledContent("History") {

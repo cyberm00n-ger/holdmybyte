@@ -97,6 +97,8 @@ public struct EditDeliverySheet: View {
             bottomBar
         }
         .frame(width: Self.size.width, height: Self.size.height)
+        // A real sheet draws its own (glass) background; the offscreen snapshot has none behind the bottom bar.
+        .background(isSnapshotRendering ? AnyShapeStyle(.windowBackground) : AnyShapeStyle(.clear))
         .onAppear { if isNew { nameFocused = true } }
     }
 
