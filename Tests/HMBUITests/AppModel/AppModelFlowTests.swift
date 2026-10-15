@@ -129,7 +129,7 @@ import Testing
     // MARK: queue
 
     @Test func queueRunsFIFOOneAtATime() async throws {
-        let h = Harness(TestData.configuration(secondsPerPhoto: 0.004))
+        let h = Harness(TestData.configuration(secondsPerPhoto: 0.05))
         let a = try await h.dropAndStart()
         #expect(h.model.isRunning)
         h.model.handleDrop([TestData.folder])
@@ -149,7 +149,7 @@ import Testing
     }
 
     @Test func removeFromQueueForgetsTheWedding() async throws {
-        let h = Harness(TestData.configuration(secondsPerPhoto: 0.004))
+        let h = Harness(TestData.configuration(secondsPerPhoto: 0.05))
         let a = try await h.dropAndStart()
         let b = try await h.dropAndStart()
         #expect(h.phase(b) == .queued(position: 1))
@@ -161,7 +161,7 @@ import Testing
     }
 
     @Test func startNowInsteadPausesTheCurrentJob() async throws {
-        let h = Harness(TestData.configuration(secondsPerPhoto: 0.004))
+        let h = Harness(TestData.configuration(secondsPerPhoto: 0.05))
         let a = try await h.dropAndStart()
         let b = try await h.dropAndStart()
         h.model.startNow(b)
@@ -179,7 +179,7 @@ import Testing
     // MARK: pause / resume / stop
 
     @Test func pauseResumeStop() async throws {
-        let h = Harness(TestData.configuration(secondsPerPhoto: 0.004))
+        let h = Harness(TestData.configuration(secondsPerPhoto: 0.05))
         let id = try await h.dropAndStart()
         try await waitUntil("progress") { (h.model.state.live[id]?.photosDone ?? 0) > 2 }
         h.model.pause(id)

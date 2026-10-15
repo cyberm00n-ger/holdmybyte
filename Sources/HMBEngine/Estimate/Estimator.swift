@@ -157,6 +157,15 @@ struct Estimator: Sendable {
         return (estimates, records)
     }
 
+    /// The mosaic score the full-size estimate aims at: what the search expects to deliver (T plus its margin), shifted
+    /// by the expected full − mosaic bias.
+    static func mosaicGoal(target: Double, constants c: SearchConstants) -> Double {
+        switch c.aim {
+        case .proxyCurve: target + c.m0 - c.bias
+        case .mosaicExact: target + c.exactMargin - c.exactBiasPrior
+        }
+    }
+
     static func archiveBytes(_ photos: [SourcePhoto]) -> Int64 {
         photos.reduce(Int64(0)) { $0 + ($1.kind == .jpeg ? Int64((0.78 * Double($1.byteCount)).rounded()) : $1.byteCount) }
     }
@@ -170,8 +179,12 @@ struct Estimator: Sendable {
               let source = try? p.decoder.decode(info) else { return [:] }      // unreadable / CMYK: nothing delivered
         let needsFeatures = deliveries.contains { $0.quality == .balanced }
         let features = needsFeatures ? p.processing.features(source) : nil
+        // Variants first (one sRGB conversion, one resize per size), then the deliveries' estimates in parallel: a
+        // sample's WebP search no longer holds up its other deliveries, and the last round of samples does not leave
+        // cores idle (Docs/ENGINE.md §7).
         var srgb: PixelImage?
-        var out: [DeliveryID: Double] = [:]
+        var resized: [String: PixelImage] = [:]
+        var jobs: [(preset: DeliveryPreset, target: Double, variant: PixelImage)] = []
         for preset in deliveries.sorted(by: DeliveryPlan.executionOrder) {
             try cancel.check()
             guard let target = Targets.target(preset.quality, features: features) else { continue }
@@ -180,7 +193,37 @@ struct Estimator: Sendable {
                 if srgb == nil { srgb = p.processing.convertedToSRGB(source) }
                 v = srgb!
             }
-            if let edge = preset.size.longEdge, edge < max(v.width, v.height) { v = p.processing.resized(v, longEdge: edge) }
+            if let edge = preset.size.longEdge, edge < max(v.width, v.height) {
+                let key = "\(preset.colour.rawValue)@\(edge)"
+                if let cached = resized[key] { v = cached } else {
+                    let r = p.processing.resized(v, longEdge: edge)
+                    resized[key] = r
+                    v = r
+                }
+            }
+            jobs.append((preset, target, v))
+        }
+        let out = Locked([DeliveryID: Double]())
+        let failure = Locked<(any Error)?>(nil)
+        let work = jobs
+        DispatchQueue.concurrentPerform(iterations: work.count) { i in
+            do {
+                let bytes = try estimateBytes(work[i].preset, target: work[i].target, variant: work[i].variant, info: info,
+                                              lane: lane, cancel: cancel)
+                out.withLock { $0[work[i].preset.id] = bytes }
+            } catch {
+                failure.withLock { if $0 == nil { $0 = error } }
+            }
+        }
+        if let error = failure.snapshot { throw error }
+        return out.snapshot
+    }
+
+    /// Estimated bytes of one lossy delivery of one sample photo (κ applied).
+    private func estimateBytes(_ preset: DeliveryPreset, target: Double, variant v: PixelImage, info: SourceInfo,
+                               lane: MetricLane, cancel: CancelToken) throws -> Double {
+            let p = primitives
+            try cancel.check()
             let kind = DeliveryKind(preset)
             let kappa = learned.kappa(kind)
             let meta = MetadataEditor.output(for: info, policy: preset.metadata, colour: preset.colour)
@@ -201,29 +244,48 @@ struct Estimator: Sendable {
                             let data = try p.jpeg.encode(mosaic, distance: d, subsampling: .s420, markers: [])
                             points.append((log(d), try lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: cancel)))
                         }
-                        let ln = ProxyCurve(points: points).inverse(target + constants.m0 - constants.bias,
-                                                                    range: constants.lnDistanceRange)
-                        return exp(ln)
+                        return exp(ProxyCurve(points: points).inverse(Self.mosaicGoal(target: target, constants: constants),
+                                                                      range: constants.lnDistanceRange))
                     }
                     bytes = Double(try p.jpeg.encode(mosaic, distance: d, subsampling: .s420, markers: []).count)
                         * scale * kappa + markerBytes
                 }
-            } else if preset.format == .webp {
-                let prepared = try p.webp.prepare(v)
-                bytes = Double(try p.webp.encode(prepared, quality: Float(Targets.webpPrior(target)),
-                                                  icc: meta.icc, exif: meta.exif, xmp: meta.xmp).count) * kappa
             } else {
-                bytes = Double(try p.jpeg.encode(v, distance: Targets.jpegPrior(target), subsampling: .s420,
-                                                   markers: MetadataEditor.jpegMarkers(meta)).count) * kappa
+                // Resized (and small full-size) deliveries: the real DirectSearch on the sample's variant — a few probes
+                // on a ≤ 5 MP image. One probe at the prior missed by 30–45 % on the holdout: the parameter that reaches
+                // the floor at 1440/2560 px differs from the full-size prior, and some photos only reach a high floor
+                // with 4:4:4 (Docs/ENGINE.md §7).
+                bytes = try lane.withReference(v, cancel: cancel) { ref -> Double in
+                    func verify(_ data: Data) throws -> Double {
+                        try cancel.check()
+                        return try lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: cancel)
+                    }
+                    let markers = MetadataEditor.jpegMarkers(meta)
+                    func jpegSearch() throws -> Double? {
+                        let result = try DirectSearch.jpeg(target: target, constants: constants) { d, chroma in
+                            let data = try p.jpeg.encode(v, distance: d, subsampling: chroma, markers: markers)
+                            return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
+                        }
+                        if case .encoded(let best) = result.outcome { return Double(best.bytes) }
+                        return nil
+                    }
+                    if preset.format == .webp {
+                        let prepared = try p.webp.prepare(v)
+                        let web = try DirectSearch.webp(target: target, constants: constants) { q in
+                            let data = try p.webp.encode(prepared, quality: Float(q), icc: meta.icc, exif: meta.exif, xmp: meta.xmp)
+                            return ProbeRecord(parameter: q, subsampling: nil, score: try verify(data), data: data)
+                        }
+                        if let best = web.best { return Double(best.bytes) }
+                    }
+                    return try jpegSearch() ?? 0
+                } * kappa
             }
             // Keep-original caps a full-size JPEG delivery at the source size (§3.4).
             if preset.isFullSize, info.kind == .jpeg, preset.colour == .keepProfile,
                bytes >= 0.95 * Double(info.fileBytes.count) {
                 bytes = Double(info.fileBytes.count)
             }
-            out[preset.id] = bytes
-        }
-        return out
+            return bytes
     }
 
     /// A no-decode estimate (preflight before estimates arrive, disk-full banner): full lossy 0.15 × source,

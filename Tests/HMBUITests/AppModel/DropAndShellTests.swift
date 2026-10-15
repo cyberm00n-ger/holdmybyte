@@ -117,7 +117,7 @@ import Testing
 
 @MainActor @Suite struct ShellTests {
     @Test func closingTheWindowWhileRunningShowsTheStatusItem() async throws {
-        let h = Harness(TestData.configuration(secondsPerPhoto: 0.004))
+        let h = Harness(TestData.configuration(secondsPerPhoto: 0.05))
         #expect(!h.model.showsTransientStatusItem)
         let id = try await h.dropAndStart()
         #expect(h.model.isRunning)                                        // AppDelegate keeps the app alive
@@ -137,7 +137,7 @@ import Testing
     }
 
     @Test func statusItemFollowsTheSetting() async throws {
-        let h = Harness(TestData.configuration(secondsPerPhoto: 0.004))
+        let h = Harness(TestData.configuration(secondsPerPhoto: 0.05))
         h.model.state.settings.menuBarWhileClosed = false
         _ = try await h.dropAndStart()
         h.model.windowDidDisappear()
@@ -145,7 +145,7 @@ import Testing
     }
 
     @Test func quitWhileRunningAsksAndInterrupts() async throws {
-        let h = Harness(TestData.configuration(secondsPerPhoto: 0.004))
+        let h = Harness(TestData.configuration(secondsPerPhoto: 0.05))
         let id = try await h.dropAndStart()
         #expect(!h.model.requestQuit())
         #expect(h.model.state.alert == .quitWhileRunning(id))
@@ -168,7 +168,7 @@ import Testing
     }
 
     @Test func progressIsAnnouncedAndShownInTheDock() async throws {
-        let h = Harness(TestData.configuration(secondsPerPhoto: 0.004))
+        let h = Harness(TestData.configuration(secondsPerPhoto: 0.05))
         let id = try await h.dropAndStart()
         try await waitUntil("finished") { h.phase(id) == .finished }
         #expect(h.log.announcements.contains { $0.hasSuffix("percent done") })

@@ -45,12 +45,15 @@ struct AnalyticPhoto: Sendable {
         }
     }
 
-    @Test func neverReturnsAFailingProbeAndStaysWithinTheProbeBudget() throws {
+    @Test(arguments: [SearchConstants.Aim.proxyCurve, .mosaicExact])
+    func neverReturnsAFailingProbeAndStaysWithinTheProbeBudget(aim: SearchConstants.Aim) throws {
+        var constants = SearchConstants.spec
+        constants.aim = aim
         var totalProbes = 0
         for (photo, t) in Self.family(200) {
             let counter = AnalyticPhoto.Counter()
             let result = try MosaicSearch.search(target: t, oracle: photo.oracle(counter), keepOriginalAllowed: false,
-                                                 sourceBytes: 20_000_000)
+                                                 sourceBytes: 20_000_000, constants: constants)
             guard case .encoded(let best) = result.outcome else { Issue.record("unresolved at T \(t)"); continue }
             #expect(best.score >= t)
             #expect(best.bytes == result.probes.filter { $0.score >= t }.map(\.bytes).min())
@@ -58,11 +61,16 @@ struct AnalyticPhoto: Sendable {
             #expect(s420 <= 3 + 2)
             #expect(counter.full.count <= 2 * (3 + 2))
             #expect(counter.full.allSatisfy { $0 == .s420 })                // 4:2:0 reachable → no 4:4:4
-            #expect(counter.proxy == 3)
+            if aim == .proxyCurve {
+                #expect(counter.proxy == 3)
+            } else {
+                // 3 seeds plus at most `exactSolverEvals` (+1 start, +1 bias read-back) per aimed probe.
+                #expect(counter.proxy <= 3 + (3 + 2) * (constants.exactSolverEvals + 2))
+            }
             totalProbes += result.fullProbes
         }
         let mean = Double(totalProbes) / 200
-        print(String(format: "analytic family (200 photos): mean full probes %.2f", mean))
+        print(String(format: "analytic family (200 photos, %@): mean full probes %.2f", aim.rawValue, mean))
         #expect(mean <= 2.6, "mean full probes \(mean)")
     }
 

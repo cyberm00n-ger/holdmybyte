@@ -8,6 +8,10 @@ public struct EngineOptions: Sendable {
     public var constants: SearchConstants
     /// Live full-resolution metric references at once (§3.9).
     public var maxLiveReferences: Int
+    /// Bytes shared by full-resolution metric references and archive transcodes at once (§3.9 memory budget,
+    /// Docs/DECISIONS.md D-ENG-7). nil (default): no budget beyond the three reference slots. 6.4 GB = three 45 MP
+    /// references plus one transcode, or four transcodes.
+    public var memoryBudget: Int64?
     /// Serialise metric calls on one lane (§3.9). Tests with CPU fakes may turn it off.
     public var serializeMetric: Bool
     /// UserDefaults suite for learned κ and timing (nil = standard defaults). See `LearnedEstimates`.
@@ -22,11 +26,13 @@ public struct EngineOptions: Sendable {
     public var afterRenameHook: (@Sendable (URL) throws -> Void)?
 
     public init(workerCount: Int? = nil, constants: SearchConstants = .spec, maxLiveReferences: Int = 3,
+                memoryBudget: Int64? = nil,
                 serializeMetric: Bool = true, learnedEstimatesSuite: String? = nil,
                 estimateConcurrency: Int = min(8, max(2, ProcessInfo.processInfo.activeProcessorCount - 2)),
                 writeFaultHook: (@Sendable (URL) -> Int32?)? = nil,
                 afterRenameHook: (@Sendable (URL) throws -> Void)? = nil) {
         self.workerCount = workerCount; self.constants = constants; self.maxLiveReferences = maxLiveReferences
+        self.memoryBudget = memoryBudget
         self.serializeMetric = serializeMetric; self.learnedEstimatesSuite = learnedEstimatesSuite
         self.estimateConcurrency = estimateConcurrency
         self.writeFaultHook = writeFaultHook; self.afterRenameHook = afterRenameHook

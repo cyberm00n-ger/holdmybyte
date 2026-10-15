@@ -45,8 +45,12 @@ extension HoldoutCurve {
         var total = 0, old = 0, probeCounts: [Int] = [], overshoot: [Double] = []
         for curve in holdoutCurves {
             let probes = Locked(0)
+            // The replay's proxy is the 3-point mosaic of the old experiments, so only the curve aim can be replayed;
+            // the shipped `.mosaicExact` aim is measured live (SearchABTests, Docs/ENGINE.md §3.4).
+            var constants = SearchConstants.spec
+            constants.aim = .proxyCurve
             let result = try MosaicSearch.search(target: curve.target, oracle: curve.oracle(probes: probes),
-                                                 keepOriginalAllowed: false, sourceBytes: 20_000_000)
+                                                 keepOriginalAllowed: false, sourceBytes: 20_000_000, constants: constants)
             guard case .encoded(let best) = result.outcome else { Issue.record("\(curve.name) unresolved"); continue }
             #expect(best.score >= curve.target)
             #expect(probes.snapshot == result.fullProbes)

@@ -6,7 +6,8 @@
   ],
   "sources": {
     "datenlage": "jpegos/Benchmarks/DATENLAGE.md §1b (28 Jul 2026), §7, §8 (31 Jul 2026)",
-    "holdout": "old-holdout-refscores.txt (bytes + libjxl reference SSIMULACRA2), old-holdout-ownscores.txt (old engine's own Metal scores), old-holdout.log (timing); source bytes measured from the holdout copies on 2026-10-15"
+    "holdout": "old-holdout-refscores.txt (bytes + libjxl reference SSIMULACRA2), old-holdout-ownscores.txt (old engine's own Metal scores), old-holdout.log (timing); source bytes measured from the holdout copies on 2026-10-15",
+    "holdoutV2": "hmb score of old-holdout outputs; squeeze -t 74.05…74.35 on the 5 photos below 74 under v2 (2026-10-15, load 8–11)"
   },
   "wedding": {
     "name": "Finn und Lissy",
@@ -94,143 +95,303 @@
         "sourceBytes": 18581049,
         "oldBytes": 1940281,
         "oldReferenceScore": 73.63870707,
-        "oldOwnScore": 74.1
+        "oldOwnScore": 74.1,
+        "oldV2Score": 73.7693,
+        "oldAtV2Floor": {
+          "target": 74.3,
+          "bytes": 2114802,
+          "v2Score": 75.7047
+        },
+        "oldMetadataBytes": 21159,
+        "v2MetadataBytes": 53233
       },
       {
         "name": "SH_Wedding_Lissy_Finn0042.jpg",
         "sourceBytes": 22185711,
         "oldBytes": 2263210,
         "oldReferenceScore": 75.04087417,
-        "oldOwnScore": 75.4
+        "oldOwnScore": 75.4,
+        "oldV2Score": 75.0333,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 2263210,
+          "v2Score": 75.0333
+        },
+        "oldMetadataBytes": 21778,
+        "v2MetadataBytes": 54472
       },
       {
         "name": "SH_Wedding_Lissy_Finn0070.jpg",
         "sourceBytes": 19901259,
         "oldBytes": 2351368,
         "oldReferenceScore": 73.9446542,
-        "oldOwnScore": 74.4
+        "oldOwnScore": 74.4,
+        "oldV2Score": 74.049,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 2351368,
+          "v2Score": 74.049
+        },
+        "oldMetadataBytes": 21818,
+        "v2MetadataBytes": 54553
       },
       {
         "name": "SH_Wedding_Lissy_Finn0098.jpg",
         "sourceBytes": 19281370,
         "oldBytes": 2091422,
         "oldReferenceScore": 74.16021244,
-        "oldOwnScore": 74.7
+        "oldOwnScore": 74.7,
+        "oldV2Score": 74.3314,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 2091422,
+          "v2Score": 74.3314
+        },
+        "oldMetadataBytes": 21146,
+        "v2MetadataBytes": 53210
       },
       {
         "name": "SH_Wedding_Lissy_Finn0126.jpg",
         "sourceBytes": 19874322,
         "oldBytes": 2363153,
         "oldReferenceScore": 73.78061128,
-        "oldOwnScore": 74.6
+        "oldOwnScore": 74.6,
+        "oldV2Score": 74.3796,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 2363153,
+          "v2Score": 74.3796
+        },
+        "oldMetadataBytes": 18066,
+        "v2MetadataBytes": 47048
       },
       {
         "name": "SH_Wedding_Lissy_Finn0154.jpg",
         "sourceBytes": 25668189,
         "oldBytes": 3892099,
         "oldReferenceScore": 73.57613612,
-        "oldOwnScore": 74.4
+        "oldOwnScore": 74.4,
+        "oldV2Score": 74.1531,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 3892099,
+          "v2Score": 74.1531
+        },
+        "oldMetadataBytes": 18670,
+        "v2MetadataBytes": 48220
       },
       {
         "name": "SH_Wedding_Lissy_Finn0182.jpg",
         "sourceBytes": 23957640,
         "oldBytes": 3113147,
         "oldReferenceScore": 73.84397019,
-        "oldOwnScore": 74.6
+        "oldOwnScore": 74.6,
+        "oldV2Score": 74.4714,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 3113147,
+          "v2Score": 74.4714
+        },
+        "oldMetadataBytes": 19063,
+        "v2MetadataBytes": 49043
       },
       {
         "name": "SH_Wedding_Lissy_Finn0210.jpg",
         "sourceBytes": 21577134,
         "oldBytes": 2438559,
         "oldReferenceScore": 73.68916054,
-        "oldOwnScore": 74.3
+        "oldOwnScore": 74.3,
+        "oldV2Score": 74.0361,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 2438559,
+          "v2Score": 74.0361
+        },
+        "oldMetadataBytes": 21107,
+        "v2MetadataBytes": 53129
       },
       {
         "name": "SH_Wedding_Lissy_Finn0238.jpg",
         "sourceBytes": 18971861,
         "oldBytes": 2072694,
         "oldReferenceScore": 73.89784314,
-        "oldOwnScore": 74.3
+        "oldOwnScore": 74.3,
+        "oldV2Score": 74.0019,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 2072694,
+          "v2Score": 74.0019
+        },
+        "oldMetadataBytes": 20301,
+        "v2MetadataBytes": 51519
       },
       {
         "name": "SH_Wedding_Lissy_Finn0266.jpg",
         "sourceBytes": 24880018,
         "oldBytes": 3544270,
         "oldReferenceScore": 73.80604862,
-        "oldOwnScore": 74.4
+        "oldOwnScore": 74.4,
+        "oldV2Score": 74.1288,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 3544270,
+          "v2Score": 74.1288
+        },
+        "oldMetadataBytes": 23020,
+        "v2MetadataBytes": 56956
       },
       {
         "name": "SH_Wedding_Lissy_Finn0294.jpg",
         "sourceBytes": 23882967,
         "oldBytes": 3477925,
         "oldReferenceScore": 73.24010578,
-        "oldOwnScore": 74.3
+        "oldOwnScore": 74.3,
+        "oldV2Score": 74.0955,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 3477925,
+          "v2Score": 74.0955
+        },
+        "oldMetadataBytes": 20134,
+        "v2MetadataBytes": 51182
       },
       {
         "name": "SH_Wedding_Lissy_Finn0322.jpg",
         "sourceBytes": 20396999,
         "oldBytes": 2478435,
         "oldReferenceScore": 74.20232392,
-        "oldOwnScore": 74.7
+        "oldOwnScore": 74.7,
+        "oldV2Score": 74.3354,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 2478435,
+          "v2Score": 74.3354
+        },
+        "oldMetadataBytes": 24196,
+        "v2MetadataBytes": 59301
       },
       {
         "name": "SH_Wedding_Lissy_Finn0350.jpg",
         "sourceBytes": 18535479,
         "oldBytes": 2047625,
         "oldReferenceScore": 73.42404787,
-        "oldOwnScore": 74.3
+        "oldOwnScore": 74.3,
+        "oldV2Score": 74.1211,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 2047625,
+          "v2Score": 74.1211
+        },
+        "oldMetadataBytes": 21126,
+        "v2MetadataBytes": 53167
       },
       {
         "name": "SH_Wedding_Lissy_Finn0378.jpg",
         "sourceBytes": 18173643,
         "oldBytes": 2002271,
         "oldReferenceScore": 74.14359732,
-        "oldOwnScore": 74.8
+        "oldOwnScore": 74.8,
+        "oldV2Score": 74.5116,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 2002271,
+          "v2Score": 74.5116
+        },
+        "oldMetadataBytes": 17752,
+        "v2MetadataBytes": 46419
       },
       {
         "name": "SH_Wedding_Lissy_Finn0406.jpg",
         "sourceBytes": 22711956,
         "oldBytes": 2839232,
         "oldReferenceScore": 74.09362594,
-        "oldOwnScore": 74.5
+        "oldOwnScore": 74.5,
+        "oldV2Score": 73.8755,
+        "oldAtV2Floor": {
+          "target": 74.15,
+          "bytes": 2859290,
+          "v2Score": 74.0058
+        },
+        "oldMetadataBytes": 25431,
+        "v2MetadataBytes": 61779
       },
       {
         "name": "SH_Wedding_Lissy_Finn0434.jpg",
         "sourceBytes": 21304425,
         "oldBytes": 2970266,
         "oldReferenceScore": 73.60322949,
-        "oldOwnScore": 74.2
+        "oldOwnScore": 74.2,
+        "oldV2Score": 73.8397,
+        "oldAtV2Floor": {
+          "target": 74.25,
+          "bytes": 3056248,
+          "v2Score": 74.3871
+        },
+        "oldMetadataBytes": 19902,
+        "v2MetadataBytes": 50713
       },
       {
         "name": "SH_Wedding_Lissy_Finn0462.jpg",
         "sourceBytes": 22292815,
         "oldBytes": 3409763,
         "oldReferenceScore": 73.74234948,
-        "oldOwnScore": 74.3
+        "oldOwnScore": 74.3,
+        "oldV2Score": 73.9743,
+        "oldAtV2Floor": {
+          "target": 74.3,
+          "bytes": 3541888,
+          "v2Score": 74.5388
+        },
+        "oldMetadataBytes": 21775,
+        "v2MetadataBytes": 54475
       },
       {
         "name": "SH_Wedding_Lissy_Finn0490.jpg",
         "sourceBytes": 19952826,
         "oldBytes": 2359263,
         "oldReferenceScore": 73.68420188,
-        "oldOwnScore": 74.2
+        "oldOwnScore": 74.2,
+        "oldV2Score": 73.9979,
+        "oldAtV2Floor": {
+          "target": 74.25,
+          "bytes": 2441688,
+          "v2Score": 74.5257
+        },
+        "oldMetadataBytes": 18695,
+        "v2MetadataBytes": 48308
       },
       {
         "name": "SH_Wedding_Lissy_Finn0518.jpg",
         "sourceBytes": 18154545,
         "oldBytes": 2151576,
         "oldReferenceScore": 73.70003045,
-        "oldOwnScore": 74.5
+        "oldOwnScore": 74.5,
+        "oldV2Score": 74.3016,
+        "oldAtV2Floor": {
+          "target": 74.0,
+          "bytes": 2151576,
+          "v2Score": 74.3016
+        },
+        "oldMetadataBytes": 16732,
+        "v2MetadataBytes": 44370
       }
-    ]
+    ],
+    "oldEngineAtV2Floor": {
+      "label": "old engine at equal v2-measured floor: smallest old output (squeeze -t, 0.05 steps) whose v2 score (ImageIO decode, Metal SSIMULACRA2) is >= 74",
+      "bytes": 50301670,
+      "metadataBytes": 391871,
+      "v2MetadataBytes": 991097,
+      "source": "Docs/DECISIONS.md D-ENG-1 (2026-10-15); old outputs re-scored with hmb score; raised targets run into a scratch folder"
+    }
   },
   "gates": {
     "quietLoadAverage": 3.0,
     "G1": {
       "set": "holdout",
       "delivery": "couple",
-      "maxBytes": 50310000,
-      "maxMeanProbes": 2.2
+      "maxBytes": 50301670,
+      "maxMeanProbes": 2.2,
+      "basis": "old engine at equal v2-measured floor (holdout.oldEngineAtV2Floor), Docs/DECISIONS.md D-ENG-1"
     },
     "G2": {
       "set": "holdout",

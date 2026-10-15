@@ -17,10 +17,41 @@ public struct SearchConstants: Sendable, Hashable {
     public var distanceLimits: ClosedRange<Double> = 0.1...25
     /// DirectSearch: stop at the first passing probe with s − T below this, or after `directMaxProbes`.
     public var directStop = 1.0
+    /// DirectSearch for JPEG (Social, small full-size): the same rule with a tighter window. jpegli's distance is
+    /// continuous, so a narrower window costs ~0.4 probes on a ≤ 5 MP variant and saves ~2 % of the bytes (holdout,
+    /// Social 1440 ≥ 85: 6.158 → 6.016 MB, overshoot 0.44 → 0.24, probes 3.58 → 3.95; Docs/DECISIONS.md D-ENG-8). WebP
+    /// keeps `directStop`: its integer q steps are coarser than a tighter window (holdout Website: no gain, more probes).
+    public var directStopJPEG = 0.5
     public var directMaxProbes = 5
     /// E2 chroma gate: also search 4:4:4 when chromaEnergy ≥ this. Off unless `chromaGate` is set.
     public var chromaGateThreshold = 2.42
     public var chromaGate = false
+
+    /// How full-size probes are aimed (Docs/ENGINE.md §3.2). `.proxyCurve` is the original §3.4 loop (bias against a
+    /// 3-point piecewise-linear proxy curve); `.mosaicExact` predicts a full-resolution score as the mosaic's score
+    /// *at the same distance* (encoded and scored exactly, so jpegli's quantiser steps are tracked) plus a per-photo bias.
+    public enum Aim: String, Sendable, Hashable { case proxyCurve, mosaicExact }
+    public var aim: Aim = .mosaicExact
+    /// `.mosaicExact`: full − mosaic before any full probe (holdout median, live ImageIO decode).
+    public var exactBiasPrior = -1.1
+    /// `.mosaicExact`: d(full − mosaic)/d ln d, used while only one side of the bracket is known.
+    public var exactBiasSlope = -0.6
+    /// `.mosaicExact`: margins above T for the first and for later full probes, and the accept rule.
+    public var exactFirstMargin = 0.0
+    public var exactMargin = 0.03
+    public var exactStop = 0.15
+    /// `.mosaicExact`: mosaic evaluations per aim (the solver stops earlier once the bracket is below `exactSolverWidth`).
+    public var exactSolverEvals = 6
+    public var exactSolverWidth = 0.004
+    /// `.mosaicExact`: no full probe within this distance (ln d) of an earlier one — inside a quantiser step the bytes and
+    /// the score do not change, and a bracket this narrow straddles a step.
+    public var exactMinStep = 0.003
+    /// `.mosaicExact`: the margin grows by this for every failing full probe after the first (0: off; the holdout A/B
+    /// preferred the rescue below).
+    public var exactFailStep = 0.0
+    /// `.mosaicExact`: when no full probe passes, the first rescue probe is aimed by the model at T + this (instead of
+    /// d × 0.8, which overshoots by 2–3 points); further rescue probes use d × 0.8.
+    public var exactRescueMargin = 0.3
     public init() {}
     public static let spec = SearchConstants()
 }
@@ -44,10 +75,13 @@ public enum Targets {
     /// JPEG distance prior: exp(0.693 + 0.06·(74 − T)) → 74: 2.00, 85: 1.03, 90: 0.77.
     public static func jpegPrior(_ target: Double) -> Double { exp(0.693 + 0.06 * (74 - target)) }
 
-    /// WebP quality prior: 75 at T = 70 (§3.5). The slope is a placeholder until it is fitted on the holdout
-    /// with live primitives (Docs/ENGINE.md).
-    public static func webpPrior(_ target: Double) -> Double { min(100, max(5, 75 + webpPriorSlope * (target - 70))) }
-    public static let webpPriorSlope = 1.5
+    /// WebP quality prior, fitted on the holdout at 2560 px (median q reaching T: 65 → 72, 70 → 80, 75 → 86, 80 → 90,
+    /// 85 → 94; Docs/ENGINE.md §3.1). §3.5's 75 at T = 70 was 5 q too low.
+    public static func webpPrior(_ target: Double) -> Double {
+        min(100, max(5, webpPriorAt70 + webpPriorSlope * (target - 70)))
+    }
+    public static let webpPriorAt70 = 80.0
+    public static let webpPriorSlope = 1.1
 }
 
 /// One encoded candidate and its verified score.

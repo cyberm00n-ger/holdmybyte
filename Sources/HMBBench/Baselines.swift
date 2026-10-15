@@ -36,11 +36,32 @@ public struct Baselines: Codable, Sendable, Hashable {
     }
 
     public struct HoldoutFile: Codable, Sendable, Hashable {
+        public struct AtV2Floor: Codable, Sendable, Hashable {
+            /// The old engine's `-t` target that produced it (74 = the Classic output itself).
+            public var target: Double
+            public var bytes: Int64
+            public var v2Score: Double
+        }
         public var name: String
         public var sourceBytes: Int64
         public var oldBytes: Int64
         public var oldReferenceScore: Double
         public var oldOwnScore: Double
+        /// The old output re-scored with v2's decoder and metric (Docs/METRIC.md §4).
+        public var oldV2Score: Double?
+        /// The smallest old-engine output whose v2 score reaches the floor (Docs/DECISIONS.md D-ENG-1).
+        public var oldAtV2Floor: AtV2Floor?
+        /// APPn/COM bytes in the old output and in v2's Couple's Package output (keepAll).
+        public var oldMetadataBytes: Int64?
+        public var v2MetadataBytes: Int64?
+    }
+
+    public struct HoldoutAtV2Floor: Codable, Sendable, Hashable {
+        public var label: String?
+        public var bytes: Int64
+        public var metadataBytes: Int64?
+        public var v2MetadataBytes: Int64?
+        public var source: String?
     }
 
     public struct HoldoutOldEngine: Codable, Sendable, Hashable {
@@ -58,6 +79,8 @@ public struct Baselines: Codable, Sendable, Hashable {
         public var photos: Int
         public var sourceBytes: Int64
         public var oldEngine: HoldoutOldEngine
+        /// The old engine held to v2's measured floor (the G1 basis since D-ENG-1).
+        public var oldEngineAtV2Floor: HoldoutAtV2Floor?
         public var files: [HoldoutFile]
     }
 
@@ -75,6 +98,8 @@ public struct Baselines: Codable, Sendable, Hashable {
             public var maxEstimateError: Double?
             public var maxPeakRSSBytes: Int64?
             public var stopFraction: Double?
+            /// Where the threshold comes from, when it is not the spec's number (Docs/DECISIONS.md).
+            public var basis: String?
         }
         public struct Limits: Codable, Sendable, Hashable {
             public var minScore: Double?

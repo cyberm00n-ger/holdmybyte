@@ -68,7 +68,7 @@ enum LiveGate {
         }
         #expect(mean <= 2.2)
         #expect((probes.max() ?? 0) <= 5)
-        #expect(total <= 50_310_000)
+        #expect(total <= 50_301_670)       // G1 (D-ENG-1): the old engine held to the v2-measured floor
     }
 
     @Test(.enabled(if: LiveGate.samplesReady)) func determinismSixPhotosFourDeliveries() async throws {
