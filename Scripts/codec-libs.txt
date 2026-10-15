@@ -1,0 +1,13 @@
+# Static archives merged into libhmbcodecs.a by Scripts/build-codecs.sh.
+# Format: <ROOT> <path relative to that root>; ROOT ∈ JXL_BUILD, WEBP_BUILD.
+JXL_BUILD lib/libjxl.a
+JXL_BUILD lib/libjxl_cms.a
+JXL_BUILD lib/libjxl_threads.a
+JXL_BUILD lib/libjpegli-static.a
+JXL_BUILD third_party/highway/libhwy.a
+JXL_BUILD third_party/brotli/libbrotlicommon.a
+JXL_BUILD third_party/brotli/libbrotlidec.a
+JXL_BUILD third_party/brotli/libbrotlienc.a
+WEBP_BUILD libwebp.a
+WEBP_BUILD libsharpyuv.a
+WEBP_BUILD libwebpmux.a

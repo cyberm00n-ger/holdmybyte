@@ -1,0 +1,7 @@
+# Pinned codec sources for Scripts/build-codecs.sh (sourced by bash). See Docs/SPEC.md §3.13.
+LIBJXL_TAG="v0.11.2"
+LIBJXL_COMMIT="332feb17d17311c748445f7ee75c4fb55cc38530"
+LIBWEBP_TAG="v1.6.0"
+LIBWEBP_COMMIT="4fa21912338357f89e4fd51cf2368325b59e9bd9"
+# sha256 of Vendor/xcframeworks/HMBCodecs.xcframework/macos-arm64/libhmbcodecs.a (written by the script)
+OUTPUT_SHA256="515f666e2f2d594298a977ff38a3d5d4474d52678bfd2e171b96f96457360ca8"

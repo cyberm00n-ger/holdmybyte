@@ -1,0 +1,43 @@
+# Headers copied into Sources/CHMBCodecs/vendor-include/ by Scripts/build-codecs.sh (include layout preserved).
+# Format: <ROOT> <source path relative to ROOT> <destination path relative to vendor-include>
+# ROOT ∈ JXL_SRC, JXL_BUILD, WEBP_SRC, WEBP_BUILD.
+#
+# libjxl public API
+JXL_SRC lib/include/jxl/cms.h jxl/cms.h
+JXL_SRC lib/include/jxl/cms_interface.h jxl/cms_interface.h
+JXL_SRC lib/include/jxl/codestream_header.h jxl/codestream_header.h
+JXL_SRC lib/include/jxl/color_encoding.h jxl/color_encoding.h
+JXL_SRC lib/include/jxl/compressed_icc.h jxl/compressed_icc.h
+JXL_SRC lib/include/jxl/decode.h jxl/decode.h
+JXL_SRC lib/include/jxl/decode_cxx.h jxl/decode_cxx.h
+JXL_SRC lib/include/jxl/encode.h jxl/encode.h
+JXL_SRC lib/include/jxl/encode_cxx.h jxl/encode_cxx.h
+JXL_SRC lib/include/jxl/gain_map.h jxl/gain_map.h
+JXL_SRC lib/include/jxl/memory_manager.h jxl/memory_manager.h
+JXL_SRC lib/include/jxl/parallel_runner.h jxl/parallel_runner.h
+JXL_SRC lib/include/jxl/resizable_parallel_runner.h jxl/resizable_parallel_runner.h
+JXL_SRC lib/include/jxl/resizable_parallel_runner_cxx.h jxl/resizable_parallel_runner_cxx.h
+JXL_SRC lib/include/jxl/stats.h jxl/stats.h
+JXL_SRC lib/include/jxl/thread_parallel_runner.h jxl/thread_parallel_runner.h
+JXL_SRC lib/include/jxl/thread_parallel_runner_cxx.h jxl/thread_parallel_runner_cxx.h
+JXL_SRC lib/include/jxl/types.h jxl/types.h
+# libjxl generated headers
+JXL_BUILD lib/include/jxl/version.h jxl/version.h
+JXL_BUILD lib/include/jxl/jxl_export.h jxl/jxl_export.h
+JXL_BUILD lib/include/jxl/jxl_cms_export.h jxl/jxl_cms_export.h
+JXL_BUILD lib/include/jxl/jxl_threads_export.h jxl/jxl_threads_export.h
+# jpegli native API (include "lib/jpegli/encode.h")
+JXL_SRC lib/jpegli/common.h lib/jpegli/common.h
+JXL_SRC lib/jpegli/encode.h lib/jpegli/encode.h
+JXL_SRC lib/jpegli/types.h lib/jpegli/types.h
+JXL_SRC lib/jxl/base/include_jpeglib.h lib/jxl/base/include_jpeglib.h
+# libjpeg struct definitions as configured by the jxl build (jpegli ABI)
+JXL_BUILD lib/include/jpegli/jpeglib.h jpeglib.h
+JXL_BUILD lib/include/jpegli/jmorecfg.h jmorecfg.h
+JXL_BUILD lib/include/jpegli/jconfig.h jconfig.h
+# libwebp
+WEBP_SRC src/webp/encode.h webp/encode.h
+WEBP_SRC src/webp/decode.h webp/decode.h
+WEBP_SRC src/webp/mux.h webp/mux.h
+WEBP_SRC src/webp/mux_types.h webp/mux_types.h
+WEBP_SRC src/webp/types.h webp/types.h
