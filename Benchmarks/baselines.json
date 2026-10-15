@@ -1,0 +1,288 @@
+{
+  "schema": 1,
+  "notes": [
+    "Reference numbers for hmb bench (Docs/SPEC.md §5.5, §6.2). Every value is copied as a number from the sources named in 'sources'; no photo or output file is committed.",
+    "Byte counts are decimal (1 GB = 1e9 bytes) as in DATENLAGE; 'seconds' are wall-clock seconds."
+  ],
+  "sources": {
+    "datenlage": "jpegos/Benchmarks/DATENLAGE.md §1b (28 Jul 2026), §7, §8 (31 Jul 2026)",
+    "holdout": "old-holdout-refscores.txt (bytes + libjxl reference SSIMULACRA2), old-holdout-ownscores.txt (old engine's own Metal scores), old-holdout.log (timing); source bytes measured from the holdout copies on 2026-10-15"
+  },
+  "wedding": {
+    "name": "Finn und Lissy",
+    "photos": 535,
+    "sourceBytes": 10950000000,
+    "megapixels": 45,
+    "jpegmini": {
+      "label": "JPEGmini Pro 5",
+      "bytes": 5360000000,
+      "savedFraction": 0.5,
+      "scoreMin": 75.0,
+      "scoreMedian": 89.9,
+      "scoreMax": 93.5,
+      "wallSeconds": 226,
+      "secondsPerPhoto": 0.42,
+      "cpuSecondsPerPhoto": 2.3,
+      "source": "DATENLAGE §1b, §7"
+    },
+    "oldEngine": {
+      "couple": {
+        "label": "Kundenpaket (Classic), JPEG full size",
+        "bytes": 1350000000,
+        "savedFraction": 0.877,
+        "scoreMin": 74.0,
+        "scoreMedian": 74.5,
+        "scoreMax": 76.2,
+        "wallSeconds": 1044,
+        "source": "DATENLAGE §8 (17.4 min); §1b measured 1.37 GB at 74.0/74.5/76.2"
+      },
+      "highFull": {
+        "label": "Garantie-Stufe, JPEG full size, >= 85",
+        "bytes": 3050000000,
+        "savedFraction": 0.721,
+        "scoreMin": 85.0,
+        "scoreMedian": 85.5,
+        "scoreMax": 87.3,
+        "wallSeconds": 1902,
+        "source": "DATENLAGE §1b, §8 (31.7 min, 28 Jul)"
+      },
+      "website": {
+        "label": "WebP 2560 px, target 70",
+        "bytes": 159000000,
+        "savedFraction": 0.985,
+        "scoreMin": 70.0,
+        "wallSeconds": 222,
+        "source": "DATENLAGE §8 (3.7 min)"
+      },
+      "social": {
+        "label": "JPEG 1440 px, target 85, sRGB + EXIF strip",
+        "bytes": 155000000,
+        "savedFraction": 0.986,
+        "scoreMin": 85.0,
+        "wallSeconds": 426,
+        "source": "DATENLAGE §8 (7.1 min)"
+      },
+      "archive": {
+        "label": "JPEG XL lossless, byte-exact",
+        "bytes": 8550000000,
+        "savedFraction": 0.219,
+        "byteExact": 535,
+        "wallSeconds": 678,
+        "source": "DATENLAGE §8 (11.3 min)"
+      },
+      "allFourSeparateRunsWallSeconds": 2370,
+      "allFourBytes": 10210000000,
+      "secondsPerPhotoCouple": 1.95
+    }
+  },
+  "holdout": {
+    "photos": 19,
+    "sourceBytes": 400284208,
+    "oldEngine": {
+      "target": "Balanced (old Classic)",
+      "bytes": 49806559,
+      "wallSeconds": 42.62,
+      "userSeconds": 182.08,
+      "systemSeconds": 18.72,
+      "peakRSSBytes": 9740763136,
+      "fullProbesPerPhoto": 3.79,
+      "source": "old-holdout.log (load unknown; Lightroom closed)"
+    },
+    "files": [
+      {
+        "name": "SH_Wedding_Lissy_Finn0014.jpg",
+        "sourceBytes": 18581049,
+        "oldBytes": 1940281,
+        "oldReferenceScore": 73.63870707,
+        "oldOwnScore": 74.1
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0042.jpg",
+        "sourceBytes": 22185711,
+        "oldBytes": 2263210,
+        "oldReferenceScore": 75.04087417,
+        "oldOwnScore": 75.4
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0070.jpg",
+        "sourceBytes": 19901259,
+        "oldBytes": 2351368,
+        "oldReferenceScore": 73.9446542,
+        "oldOwnScore": 74.4
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0098.jpg",
+        "sourceBytes": 19281370,
+        "oldBytes": 2091422,
+        "oldReferenceScore": 74.16021244,
+        "oldOwnScore": 74.7
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0126.jpg",
+        "sourceBytes": 19874322,
+        "oldBytes": 2363153,
+        "oldReferenceScore": 73.78061128,
+        "oldOwnScore": 74.6
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0154.jpg",
+        "sourceBytes": 25668189,
+        "oldBytes": 3892099,
+        "oldReferenceScore": 73.57613612,
+        "oldOwnScore": 74.4
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0182.jpg",
+        "sourceBytes": 23957640,
+        "oldBytes": 3113147,
+        "oldReferenceScore": 73.84397019,
+        "oldOwnScore": 74.6
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0210.jpg",
+        "sourceBytes": 21577134,
+        "oldBytes": 2438559,
+        "oldReferenceScore": 73.68916054,
+        "oldOwnScore": 74.3
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0238.jpg",
+        "sourceBytes": 18971861,
+        "oldBytes": 2072694,
+        "oldReferenceScore": 73.89784314,
+        "oldOwnScore": 74.3
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0266.jpg",
+        "sourceBytes": 24880018,
+        "oldBytes": 3544270,
+        "oldReferenceScore": 73.80604862,
+        "oldOwnScore": 74.4
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0294.jpg",
+        "sourceBytes": 23882967,
+        "oldBytes": 3477925,
+        "oldReferenceScore": 73.24010578,
+        "oldOwnScore": 74.3
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0322.jpg",
+        "sourceBytes": 20396999,
+        "oldBytes": 2478435,
+        "oldReferenceScore": 74.20232392,
+        "oldOwnScore": 74.7
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0350.jpg",
+        "sourceBytes": 18535479,
+        "oldBytes": 2047625,
+        "oldReferenceScore": 73.42404787,
+        "oldOwnScore": 74.3
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0378.jpg",
+        "sourceBytes": 18173643,
+        "oldBytes": 2002271,
+        "oldReferenceScore": 74.14359732,
+        "oldOwnScore": 74.8
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0406.jpg",
+        "sourceBytes": 22711956,
+        "oldBytes": 2839232,
+        "oldReferenceScore": 74.09362594,
+        "oldOwnScore": 74.5
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0434.jpg",
+        "sourceBytes": 21304425,
+        "oldBytes": 2970266,
+        "oldReferenceScore": 73.60322949,
+        "oldOwnScore": 74.2
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0462.jpg",
+        "sourceBytes": 22292815,
+        "oldBytes": 3409763,
+        "oldReferenceScore": 73.74234948,
+        "oldOwnScore": 74.3
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0490.jpg",
+        "sourceBytes": 19952826,
+        "oldBytes": 2359263,
+        "oldReferenceScore": 73.68420188,
+        "oldOwnScore": 74.2
+      },
+      {
+        "name": "SH_Wedding_Lissy_Finn0518.jpg",
+        "sourceBytes": 18154545,
+        "oldBytes": 2151576,
+        "oldReferenceScore": 73.70003045,
+        "oldOwnScore": 74.5
+      }
+    ]
+  },
+  "gates": {
+    "quietLoadAverage": 3.0,
+    "G1": {
+      "set": "holdout",
+      "delivery": "couple",
+      "maxBytes": 50310000,
+      "maxMeanProbes": 2.2
+    },
+    "G2": {
+      "set": "holdout",
+      "delivery": "couple",
+      "maxWallRatioToOldEngine": 0.6
+    },
+    "G3": {
+      "set": "wedding",
+      "delivery": "couple",
+      "maxBytes": 1370000000,
+      "maxWallSeconds": 600
+    },
+    "G4": {
+      "set": "wedding",
+      "delivery": "high-full",
+      "minScore": 85.0,
+      "maxBytes": 3100000000
+    },
+    "G5": {
+      "set": "wedding",
+      "website": {
+        "minScore": 70.0,
+        "maxBytes": 165000000,
+        "maxWallSecondsAlone": 150
+      },
+      "social": {
+        "minScore": 85.0,
+        "maxBytes": 165000000
+      }
+    },
+    "G6": {
+      "set": "wedding",
+      "delivery": "archive",
+      "maxBytes": 8600000000,
+      "maxWallSecondsAlone": 360
+    },
+    "G7": {
+      "set": "wedding",
+      "deliveries": [
+        "couple",
+        "website",
+        "social",
+        "archive"
+      ],
+      "maxWallSeconds": 840,
+      "maxEstimateError": 0.15,
+      "maxPeakRSSBytes": 8000000000
+    },
+    "G8": {
+      "set": "wedding",
+      "delivery": "couple",
+      "stopFraction": 0.4
+    }
+  }
+}
