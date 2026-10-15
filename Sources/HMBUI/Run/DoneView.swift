@@ -151,6 +151,7 @@ struct IssuesCard: View {
                 HStack {
                     Spacer()
                     Button(Copy.Issues.tryAgainForAll) { model.retry(record.id, photos: nil) }
+                        .disabled(model.missingFolders.contains(record.id))
                 }
             }
         }
@@ -189,6 +190,7 @@ struct IssueGroupView: View {
                         if group.failure.isRetryable {
                             Button(Copy.Issues.tryAgain) { model.retry(record.id, photos: [photo.id]) }
                                 .buttonStyle(.borderless)
+                                .disabled(model.missingFolders.contains(record.id))
                         }
                     }
                 }
@@ -228,7 +230,11 @@ struct DeliveryTiles: View {
     let folderMissing: Bool
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: Tokens.Spacing.s12)], spacing: Tokens.Spacing.s12) {
+        // A single delivery spans the full width (an adaptive column would leave it at one column's width).
+        let columns = record.deliveries.count == 1
+            ? [GridItem(.flexible())]
+            : [GridItem(.adaptive(minimum: 220), spacing: Tokens.Spacing.s12)]
+        LazyVGrid(columns: columns, spacing: Tokens.Spacing.s12) {
             ForEach(record.deliveries) { preset in
                 DeliveryTile(record: record, preset: preset, summary: presentation.summary(preset), folderMissing: folderMissing)
             }

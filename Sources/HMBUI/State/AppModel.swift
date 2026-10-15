@@ -40,6 +40,9 @@ public final class AppModel {
     @ObservationIgnored private var scanTask: Task<Void, Never>?
     @ObservationIgnored private var estimateTasks: [Task<Void, Never>] = []
     @ObservationIgnored private var preflightTask: Task<Void, Never>?
+    /// The request the draft's current preflight answers; a start with a different request preflights again, so a
+    /// name typed (or a delivery toggled) just before Return never commits a stale output folder.
+    @ObservationIgnored private var preflightBasis: JobRequest?
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var dropErrorTask: Task<Void, Never>?
     @ObservationIgnored private var toastTask: Task<Void, Never>?
@@ -52,6 +55,10 @@ public final class AppModel {
     @ObservationIgnored private var createMoreBackup: [WeddingID: WeddingRecord] = [:]
     @ObservationIgnored private var resumeWhenReachingHead: Set<WeddingID> = []
     @ObservationIgnored private var startNowTarget: WeddingID?
+    /// Weddings whose next run is a new job although they ran before (Create More Deliveries): run with `resume: false`.
+    @ObservationIgnored private var freshRuns: Set<WeddingID> = []
+    /// Saves not yet written by the history store (quit waits for them).
+    @ObservationIgnored private var pendingSaves = 0
     @ObservationIgnored private var runStartedAt: [WeddingID: Date] = [:]
     @ObservationIgnored private var lastSaved: [WeddingID: Date] = [:]
     @ObservationIgnored private var announcedDecile: [WeddingID: Int] = [:]
@@ -94,19 +101,43 @@ public final class AppModel {
             changed.insert(id)
             if let i = records.firstIndex(where: { $0.id == id }) {
                 var record = records[i]
-                record.results = Self.merged(record.results, job.results)
                 switch record.phase {
-                case .paused, .stopped: break
-                default: record.phase = .interrupted
+                case .finished, .failed:
+                    // The record already holds the outcome; the journal is a leftover (the app quit before it was
+                    // discarded). Never turn a finished wedding back into an interrupted one.
+                    changed.remove(id)
+                    requests[id] = nil
+                    Task { [engine] in await engine.discardJournal(id) }
+                    continue
+                case .paused, .stopped:
+                    record.results = Self.merged(record.results, job.results)
+                default:
+                    record.results = Self.merged(record.results, job.results)
+                    record.phase = .interrupted
                 }
                 records[i] = record
             } else {
                 records.append(Self.record(from: job, now: platform.now()))
             }
         }
-        for i in records.indices where records[i].phase == .running {
-            records[i].phase = .interrupted                  // it ran, but the engine has no journal for it
-            changed.insert(records[i].id)
+        let journaled = Set(unfinished.map(\.request.wedding))
+        for i in records.indices where !journaled.contains(records[i].id) {
+            switch records[i].phase {
+            case .running:
+                records[i].phase = .interrupted              // it ran, but the engine has no journal for it
+                changed.insert(records[i].id)
+            case .queued where records[i].startedAt != nil:
+                let pending = records[i].deliveries.contains { records[i].deliveryCompletedAt[$0.id.rawValue] == nil }
+                if pending {
+                    // Queued Create More Deliveries (earlier deliveries are complete): a new job, not a resume.
+                    if !records[i].deliveryCompletedAt.isEmpty { freshRuns.insert(records[i].id) }
+                } else {
+                    records[i].phase = .finished             // a queued Try Again (its photo list is not persisted)
+                    changed.insert(records[i].id)
+                }
+            default:
+                break
+            }
         }
         state.records = records
         for record in records { rebuildIndex(record.id) }
@@ -178,6 +209,11 @@ public final class AppModel {
         }
     }
 
+    /// A drag is over the window (the drop zone or the setup shows its target state).
+    public var isDropTargeted: Bool {
+        state.dropZone.isTargeted || state.draft?.isDropTargeted == true
+    }
+
     public func choosePhotos() {
         guard let urls = platform.chooseItems(), !urls.isEmpty else { return }
         handleDrop(urls)
@@ -215,6 +251,7 @@ public final class AppModel {
         estimateTasks.forEach { $0.cancel() }; estimateTasks = []
         preflightTask?.cancel(); preflightTask = nil
         startTask?.cancel(); startTask = nil
+        preflightBasis = nil
     }
 
     private func startScan() {
@@ -405,16 +442,18 @@ public final class AppModel {
             return
         }
         startPending = false
-        if let preflight = draft.preflight {
+        let request = draftRequest(draft, scan: scan)
+        if let preflight = draft.preflight, preflightBasis == request {
             commit(draft, scan: scan, preflight: preflight)
             return
         }
-        let request = draftRequest(draft, scan: scan)
+        preflightTask?.cancel()
         startTask?.cancel()
         startTask = Task { [weak self] in
             guard let self else { return }
             let preflight = await self.engine.preflight(request)
             guard !Task.isCancelled, self.state.draft?.wedding == draft.wedding else { return }
+            self.preflightBasis = request
             self.state.draft?.preflight = preflight
             if let current = self.state.draft, self.draftCanStart { self.commit(current, scan: scan, preflight: preflight) }
         }
@@ -480,6 +519,7 @@ public final class AppModel {
             if request.deliveries.isEmpty { request.deliveries = self.draftPresets.filter { current.enabled[$0.id] == true } }
             let preflight = await self.engine.preflight(request)
             guard !Task.isCancelled, self.state.draft?.wedding == draftID else { return }
+            self.preflightBasis = request
             self.state.draft?.preflight = preflight
         }
     }
@@ -506,6 +546,7 @@ public final class AppModel {
             request.name = record.name
             replace(record)
             rebuildIndex(existingID)
+            freshRuns.insert(existingID)                      // the original job's journal is gone: a new job
         } else {
             let record = WeddingRecord(
                 id: id, name: request.name, createdAt: now, weddingDate: scan.weddingDate, camera: scan.camera,
@@ -595,11 +636,13 @@ public final class AppModel {
             resume = false
         } else {
             request = jobRequest(for: record)
-            resume = record.startedAt != nil
+            resume = record.startedAt != nil && !freshRuns.contains(id)
         }
+        freshRuns.remove(id)
         activeRequest[id] = request
         statusItemDismissed = false
         if let i = index(id) { state.records[i].phase = .running }
+        persist(id)                                           // a phase change is saved even before the engine's first event
         let stream = engine.run(request, resume: resume)
         runTasks[id] = Task { [weak self] in
             for await event in stream {
@@ -715,18 +758,24 @@ public final class AppModel {
         if quitting { return }
         switch state.records[i].phase {
         case .paused:
-            if let target = startNowTarget {
-                startNowTarget = nil
-                state.queue.removeAll { $0 == target }
-                state.queue.insert(target, at: 0)
-                updateQueuePositions()
-            }
+            break
         case .queued:
             break           // re-queued (Try Again, Create More) between the final phase and the end of the stream
         default:
             state.queue.removeAll { $0 == id }
+            resumeWhenReachingHead.remove(id)
             updateQueuePositions()
             if state.records[i].phase == .finished { Task { await engine.discardJournal(id) } }
+        }
+        // Start Now Instead: the wedding goes first however the job before it ended (paused as asked, or it finished,
+        // stopped or failed before the pause arrived), as long as it is still waiting.
+        if let target = startNowTarget {
+            startNowTarget = nil
+            if let waiting = record(target), case .queued = waiting.phase {
+                state.queue.removeAll { $0 == target }
+                state.queue.insert(target, at: 0)
+                updateQueuePositions()
+            }
         }
         advanceQueue()
         updateDock()
@@ -821,6 +870,7 @@ public final class AppModel {
         state.queue.removeAll { $0 == id }
         requests[id] = nil
         retryQueue[id] = nil
+        freshRuns.remove(id)
         if let backup = createMoreBackup.removeValue(forKey: id) {
             replace(backup)
             rebuildIndex(id)
@@ -858,6 +908,8 @@ public final class AppModel {
     /// Try Again (issues) for `photos` (nil: every retryable failure), or the whole job of a failed wedding.
     public func retry(_ id: WeddingID, photos: [PhotoID]?) {
         guard let record = record(id), record.phase == .finished || Self.isFailed(record.phase) else { return }
+        // A retry writes into the delivery folder: never while it is missing (it would be recreated at the old path).
+        if record.phase == .finished, missingFolders.contains(id) { return }
         if Self.isFailed(record.phase) {
             requests[id] = nil
             if let i = index(id) {
@@ -980,10 +1032,12 @@ public final class AppModel {
         if state.draft?.existingWedding == id { cancelSetup() }
         let engine = engine, history = history
         let previous = saveChain
-        saveChain = Task {
+        pendingSaves += 1
+        saveChain = Task { [weak self] in
             await previous?.value
             await engine.discardJournal(id)
             try? await history.remove(id)
+            self?.pendingSaves -= 1
         }
         updateQueuePositions()
         advanceQueue()
@@ -1091,7 +1145,16 @@ public final class AppModel {
     /// `applicationShouldTerminate`: true → quit now; false → the quit alert is shown and the answer comes later
     /// through `platform.replyToTerminate`.
     public func requestQuit() -> Bool {
-        guard let running = runningID else { return true }
+        guard let running = runningID else {
+            guard pendingSaves > 0 else { return true }
+            // A rename, a removal or a phase change may still be on its way to disk: quit once it is written.
+            quitting = true
+            Task { [weak self] in
+                await self?.flushSaves()
+                self?.platform.replyToTerminate(true)
+            }
+            return false
+        }
         state.alert = .quitWhileRunning(running)
         platform.openMainWindow()
         return false
@@ -1154,9 +1217,11 @@ public final class AppModel {
         lastSaved[id] = platform.now()
         let previous = saveChain
         let history = history
-        saveChain = Task {
+        pendingSaves += 1
+        saveChain = Task { [weak self] in
             await previous?.value
             try? await history.save(record)
+            self?.pendingSaves -= 1
         }
     }
 

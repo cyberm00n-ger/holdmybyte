@@ -6,7 +6,7 @@ import HMBUI
 import UserNotifications
 
 @MainActor
-final class NotificationPoster: NSObject, @preconcurrency UNUserNotificationCenterDelegate {
+final class NotificationPoster: NSObject, UNUserNotificationCenterDelegate {
     enum Action { case showInFinder, compare, open }
 
     static let finishedCategory = "finished"
@@ -50,8 +50,10 @@ final class NotificationPoster: NSObject, @preconcurrency UNUserNotificationCent
         center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
-                                withCompletionHandler completionHandler: @escaping () -> Void) {
+    /// UserNotifications may call its delegate off the main thread; a main-actor-isolated conformance would then trap
+    /// at runtime, so the callback is nonisolated and hops to the main actor.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping @Sendable () -> Void) {
         defer { completionHandler() }
         guard let raw = response.notification.request.content.userInfo["wedding"] as? String,
               let uuid = UUID(uuidString: raw) else { return }
@@ -60,6 +62,7 @@ final class NotificationPoster: NSObject, @preconcurrency UNUserNotificationCent
         case Self.compareAction: .compare
         default: .open
         }
-        onAction(action, WeddingID(uuid))
+        let wedding = WeddingID(uuid)
+        Task { @MainActor in self.onAction(action, wedding) }
     }
 }

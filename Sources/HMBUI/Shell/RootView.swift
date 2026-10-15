@@ -153,7 +153,8 @@ struct WindowDropDelegate: DropDelegate {
         model.setDropTargeted(true, summary: .items(count: max(1, providers.count)))
         Task { @MainActor in
             let urls = await Self.urls(from: providers)
-            guard !urls.isEmpty else { return }
+            // The drag may have left the window or been dropped while the URLs loaded: never re-target then.
+            guard !urls.isEmpty, model.isDropTargeted else { return }
             model.setDropTargeted(true, summary: model.dragSummary(for: urls))
         }
     }

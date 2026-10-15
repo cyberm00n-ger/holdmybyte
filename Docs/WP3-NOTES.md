@@ -32,7 +32,7 @@ in memory; nothing is read from or written to the real history or any photo fold
 | 5 | Performance | **Grid: met** (proxy). **Done view: borderline, see measurements.** |
 | 6 | Visual review in WP5's harness, light + dark, 1120×780 and 780×560 | **WP3 side done**: all 31 WP3 ids rendered in both appearances and both sizes (124 PNGs) with `RenderStatesTests` and reviewed; fixes made (see below). The official run is WP5's harness; `WP3StateCatalogue` gives it ready models. |
 
-`swift build` and `swift test`: green, 113 tests in the package (WP3: 45 run + 4 gated), zero warnings in WP3 files
+`swift build` and `swift test`: green, 120 tests in the package (WP3: 52 run + 4 gated), zero warnings in WP3 files
 (verified by touching all WP3 files and rebuilding).
 
 ## Measurements (shared machine; `uptime` load given with each)
@@ -103,10 +103,30 @@ harness should call `GridScrollProbe.run(window:hosting:seconds:)` on a real win
   `ignoresMouseEvents` — invisible to the person at the Mac. Never order a titled window "offscreen" without overriding
   `constrainFrameRect`: AppKit moves it onto the screen. Alerts: add the default button first to `NSAlert`.
 
+## Review fixes (independent review)
+
+Covered by `Tests/HMBUITests/AppModel/ReviewFixTests.swift` (7 tests; the first five fail on the pre-review model).
+
+- **Stale preflight on Return:** typing a name and pressing Return within the 250 ms debounce committed the previous
+  preflight's output folder (old name). `startDraft` now commits only a preflight computed for the current request.
+- **Create More ran with `resume: true`:** the original journal is discarded at finish, so Create More (also when found
+  queued at launch) now runs as a new job (`resume: false`, `appendToExistingFolder: true`).
+- **Leftover journal of a finished/failed wedding:** bootstrap no longer turns it into Interrupted; the journal is
+  discarded. A queued Try Again found at launch (its photo list is not persisted) returns to Finished.
+- **Idle quit dropped pending saves:** `requestQuit` now answers `.terminateLater` until the save chain is written.
+- **Start Now Instead:** if the running job finished/stopped before the pause arrived, the target stayed recorded and
+  could later jump the queue; it is now placed first however the job ended, then cleared.
+- **Drag summary race:** the async URL load on drag-enter could re-target the zone after the drag left or dropped.
+- **Single delivery tile** now spans the full width (S10); an adaptive grid kept it one column wide.
+- **Try Again while the delivery folder is missing** is disabled (it would recreate the folder at the old path).
+- **Notifications:** the `UNUserNotificationCenterDelegate` callback is nonisolated and hops to the main actor (a
+  main-actor conformance traps if UserNotifications calls it off the main thread).
+- `start()` saves the record when it switches to Running (before the engine's first event).
+
 ## How to reproduce
 
 ```bash
-swift build && swift test                                              # 113 tests
+swift build && swift test                                              # 120 tests
 HMB_WP3_PERF=1 swift test --filter 'PerformanceTests/'                 # timings (+ uptime in the output)
 HMB_WP3_RENDER_DIR=/tmp/wp3 swift test --filter RenderStatesTests      # 62 PNGs (+ HMB_WP3_RENDER_SMALL=1: 780×560;
                                                                        #   HMB_WP3_RENDER_ORDER=1: window-server capture)
