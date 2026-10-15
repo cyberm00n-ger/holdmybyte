@@ -501,7 +501,7 @@ struct ProofThumb: View {
                 Text(HMBFormat.score(score, locale: locale))
                     .font(.caption2.monospacedDigit())
                     .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .hmbMaterial(.ultraThinMaterial, in: Capsule())
                     .padding(4)
             }
             .accessibilityLabel("\(photo.relativePath), score \(HMBFormat.score(score, locale: locale))")

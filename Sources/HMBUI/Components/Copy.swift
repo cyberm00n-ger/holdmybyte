@@ -18,6 +18,16 @@ public enum Copy {
     /// “Finn und Lissy” (typographic quotes).
     public static func quoted(_ s: String) -> String { "“\(s)”" }
 
+    /// For titles: the spaces inside “…” become non-breaking, so a title wraps before or after a quoted name, never
+    /// inside it ("Stop compressing / “Finn und Lissy”?"). The copy itself keeps plain spaces.
+    public static func keepingQuotesTogether(_ s: String) -> String {
+        var inside = false
+        return String(s.map { c -> Character in
+            if c == "“" { inside = true } else if c == "”" { inside = false }
+            return inside && c == " " ? "\u{00A0}" : c
+        })
+    }
+
     /// Bytes as GB with one decimal, for disk-space sentences ("1.9 GB", "0.8 GB").
     public static func gigabytes(_ n: Int64, locale: Locale = .current) -> String {
         ByteCountFormatStyle(style: .file, allowedUnits: .gb, spellsOutZero: false, locale: locale).format(n)

@@ -7,6 +7,8 @@ struct SidebarView: View {
     @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isSnapshotRendering) private var isSnapshotRendering
+    /// The wedding the user last clicked in the list: it is on screen already, so selecting it does not scroll.
+    @State private var clickedID: WeddingID?
 
     /// What to keep scrolled into view: the selected wedding and the section it sits in (a finished job moves).
     struct RevealKey: Equatable { var id: WeddingID; var inProgress: Bool; var section: String? }
@@ -21,7 +23,10 @@ struct SidebarView: View {
         let sections = SidebarSections(model.state, locale: locale)
         VStack(spacing: 0) {
             ScrollViewReader { scroller in
-                List(selection: model.selectionBinding) {
+                List(selection: Binding(get: { model.state.selection }, set: { selection in
+                    clickedID = selection?.weddingID
+                    model.selectionBinding.wrappedValue = selection
+                })) {
                     NewWeddingRow().tag(SidebarSelection.newWedding)
                     if !sections.active.isEmpty {
                         Section(Copy.Sidebar.inProgress) {
@@ -51,13 +56,22 @@ struct SidebarView: View {
                 }
                 // The selected wedding is always on screen: when a job finishes or fails (its row moves from In Progress
                 // to its month), when Create More selects it, and when it is selected from elsewhere (Dock, menus).
-                .onChange(of: revealKey(sections), initial: true) { _, key in
+                .onChange(of: revealKey(sections), initial: true) { old, key in
                     guard let key else { return }
+                    if key.id != clickedID { clickedID = nil }       // selected from elsewhere since the click
+                    // A click selects a visible row; only a move to another section (a job finished) scrolls then.
+                    if key.id == clickedID, old?.id == key.id, old?.section == key.section, old?.inProgress == key.inProgress { return }
+                    if key.id == clickedID, old?.id != key.id { return }
                     Task { @MainActor in
-                        if isSnapshotRendering {
-                            scroller.scrollTo(key.id)
-                        } else {
-                            withAnimation(Tokens.Motion.standard(reduceMotion: reduceMotion)) { scroller.scrollTo(key.id) }
+                        // Again after the list has measured its rows: an early pass uses estimated row heights and
+                        // can stop short (scrolling to a visible row is a no-op).
+                        for (pass, delay) in [0, 100, 350, 650].enumerated() {
+                            if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
+                            if isSnapshotRendering || pass > 0 {
+                                scroller.scrollTo(key.id)
+                            } else {
+                                withAnimation(Tokens.Motion.standard(reduceMotion: reduceMotion)) { scroller.scrollTo(key.id) }
+                            }
                         }
                     }
                 }

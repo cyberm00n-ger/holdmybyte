@@ -110,7 +110,7 @@ struct PhotoCell: View, Equatable {
         case .working:
             ProgressView().controlSize(.mini)
                 .frame(width: 20, height: 20)
-                .background(.regularMaterial, in: Circle())
+                .hmbMaterial(.regularMaterial, in: Circle())
         case .keptOriginal:
             Image(systemName: "equal.circle.fill").font(Tokens.Typography.statusBadge)
                 .foregroundStyle(.secondary).background(Circle().fill(.background).padding(2))

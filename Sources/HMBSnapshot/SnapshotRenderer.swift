@@ -154,7 +154,7 @@ final class SnapshotRenderer {
 
     private func renderAlert(_ copy: AlertContent, appearance: NSAppearance) throws -> RenderedImage {
         let alert = NSAlert()
-        alert.messageText = copy.title
+        alert.messageText = Copy.keepingQuotesTogether(copy.title)
         alert.informativeText = copy.message
         alert.icon = AppIconArt.image(pointSize: 64)
         alert.window.appearance = appearance

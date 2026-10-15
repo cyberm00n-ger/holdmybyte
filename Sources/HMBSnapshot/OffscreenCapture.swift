@@ -275,7 +275,7 @@ final class PocketStandIn: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let base = inGlass ? GlassStandIn.fillColor : NSColor.windowBackgroundColor
-        guard let gradient = NSGradient(colorsAndLocations: (base, 0), (base, 0.7), (base.withAlphaComponent(0), 1)) else { return }
+        guard let gradient = NSGradient(colorsAndLocations: (base, 0), (base, 0.85), (base.withAlphaComponent(0), 1)) else { return }
         gradient.draw(in: bounds, angle: barAtTop ? 90 : -90)        // flipped: 90° runs from the top edge down
     }
 }

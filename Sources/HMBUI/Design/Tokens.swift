@@ -7,12 +7,14 @@ public enum Tokens {
     // MARK: Colour
 
     public enum Palette {
-        /// `.tint` at the root only when the system accent is Multicolor (see `View.hmbAccent()`). #0B7F7B / #3CC8BF.
+        /// `.tint` at the root only when the system accent is Multicolor (see `View.hmbAccent()`). #0B7F7B / #15948C.
         public static let accentMulticolor = adaptive(light: accentMulticolorHex.light, dark: accentMulticolorHex.dark,
                                                       name: "accentMulticolor")
         /// The accent's sRGB values; also compiled into the bundle's `AccentColor` asset (Scripts/make-icon.sh), which
         /// AppKit-drawn UI (alert default buttons, open panels, menus) uses when the system accent is Multicolor.
-        public static let accentMulticolorHex: (light: UInt32, dark: UInt32) = (0x0B7F7B, 0x3CC8BF)
+        /// Dark is #15948C, not §2.5's #3CC8BF: white button text on #3CC8BF is 2.1 : 1; #15948C gives the contrast
+        /// profile of the system blue in dark mode (3.7 : 1 under white text, 4.5 : 1 on the dark window).
+        public static let accentMulticolorHex: (light: UInt32, dark: UInt32) = (0x0B7F7B, 0x15948C)
         /// Compare background, the photographer's neutral surround. #F2F2F2 / #1C1C1E.
         public static let compareSurround = adaptive(light: 0xF2F2F2, dark: 0x1C1C1E, name: "compareSurround")
         /// Warnings and the issues edge.

@@ -40,6 +40,20 @@ struct HMBGlassModifier<S: Shape>: ViewModifier {
     }
 }
 
+struct HMBMaterialModifier<S: Shape>: ViewModifier {
+    let material: Material
+    let shape: S
+    @Environment(\.isSnapshotRendering) private var isSnapshotRendering
+
+    func body(content: Content) -> some View {
+        if isSnapshotRendering {
+            content.background(Tokens.Palette.snapshotGlass, in: shape)
+        } else {
+            content.background(material, in: shape)
+        }
+    }
+}
+
 struct HMBGlassButtonStyleModifier: ViewModifier {
     let prominent: Bool
     @Environment(\.isSnapshotRendering) private var isSnapshotRendering
@@ -63,4 +77,10 @@ extension View {
     /// A toolbar or HUD menu (Delivery, Zoom, More, the Compare order menu): its symbol and title draw in the label
     /// colour like the toolbar's buttons. Menus pick up the root `.tint`, which §2.5 reserves for the listed elements.
     public func hmbMenuLabelTint() -> some View { tint(.primary) }
+
+    /// A SwiftUI material behind a small label over a photo (score capsules, grid badges); under
+    /// `isSnapshotRendering` the same flat stand-in as `hmbGlass`, because offscreen materials draw without their blur.
+    public func hmbMaterial(_ material: Material, in shape: some Shape) -> some View {
+        modifier(HMBMaterialModifier(material: material, shape: shape))
+    }
 }
