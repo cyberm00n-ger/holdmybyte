@@ -5,7 +5,8 @@ import HMBModel
 ///
 /// - Writes are atomic (temporary file + rename), so a crash leaves either the old or the new record.
 /// - A record that cannot be decoded is quarantined: `record.json` is renamed `record.json.corrupt` (or
-///   `record.json.corrupt 2`, … if that exists), logged, and skipped. Loading never fails because of one record.
+///   `record.json.corrupt 2`, … if that exists), logged, and skipped. A file that cannot be read at all (permissions,
+///   I/O error) is skipped but left in place. Loading never fails because of one record.
 /// - `loadAll` decodes the records in parallel and returns them newest wedding first (wedding date, then creation
 ///   date), the order the sidebar groups them in.
 public actor JSONHistoryStore: HistoryStoring {
@@ -27,9 +28,13 @@ public actor JSONHistoryStore: HistoryStoring {
         for (file, outcome) in zip(files, decoded) {
             switch outcome {
             case .success(let record): records.append(record)
-            case .failure(let error):
+            case .failure(let error) where error is DecodingError:
                 storeLog.error("Quarantining unreadable record \(file.path, privacy: .public): \(String(describing: error), privacy: .public)")
                 if let moved = Self.quarantine(file) { quarantined.append(moved) }
+            case .failure(let error):
+                // Could not be read (permissions, I/O): skipped this time, but never renamed. Only a file whose
+                // contents are not a record is quarantined.
+                storeLog.error("Skipping record that could not be read \(file.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
         lastQuarantined = quarantined

@@ -75,7 +75,10 @@ public final class DiskThumbnailCache: ThumbnailProviding, @unchecked Sendable {
         let mtime = stat(path, &info) == 0
             ? Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9)
             : photo.modified
-        let text = "\(path)|\(Self.clamped(maxPixelSize))|\(mtime.timeIntervalSinceReferenceDate)"
+        // Whole milliseconds: the stat(2) value and the recorded `modified` date (from URL resource values, then a
+        // JSON round-trip) differ in the last bits of their Double, which would orphan an ejected drive's thumbnails.
+        let milliseconds = Int64((mtime.timeIntervalSince1970 * 1000).rounded())
+        let text = "\(path)|\(Self.clamped(maxPixelSize))|\(milliseconds)"
         return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 

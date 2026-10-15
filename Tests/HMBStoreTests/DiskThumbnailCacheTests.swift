@@ -82,6 +82,31 @@ import Testing
         #expect(cache.statistics.failed == 1)
     }
 
+    /// A real export has a sub-second mtime; the scanner records it via URL resource values and the record goes
+    /// through JSON. After the drive is ejected, that recorded date must still give the stat(2)-based key
+    /// (about half of all nanosecond mtimes differ in the last bit of the Double between the two paths).
+    @Test func subSecondModificationTimeStillMatchesTheRecordedDate() async throws {
+        let temp = try TemporaryDirectory("thumbs")
+        defer { temp.cleanUp() }
+        var photo = try Self.photo(copying: TestFixtureFiles.gradientSRGB, into: temp.url)
+        let aside = temp.url.appending(path: "ejected.bin")
+        let cache = DiskThumbnailCache(directory: temp.url.appending(path: "Cache"))
+        var generator = SystemRandomNumberGenerator()
+        for second in 0..<40 {
+            var times = [timespec(tv_sec: 1_760_000_000 + second, tv_nsec: Int.random(in: 0..<1_000_000_000, using: &generator)),
+                         timespec(tv_sec: 1_760_000_000 + second, tv_nsec: Int.random(in: 0..<1_000_000_000, using: &generator))]
+            #expect(utimensat(AT_FDCWD, photo.url.path, &times, 0) == 0)
+            let recorded = try #require(try URL(fileURLWithPath: photo.url.path)
+                .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+            photo.modified = try JSONDecoder().decode(Date.self, from: JSONEncoder().encode(recorded))
+            let reachable = cache.cacheKey(for: photo, maxPixelSize: 160)
+            try FileManager.default.moveItem(at: photo.url, to: aside)          // the drive was ejected
+            let unreachable = cache.cacheKey(for: photo, maxPixelSize: 160)
+            try FileManager.default.moveItem(at: aside, to: photo.url)
+            #expect(unreachable == reachable)
+        }
+    }
+
     @Test func concurrentRequestsShareOneGeneration() async throws {
         let temp = try TemporaryDirectory("thumbs")
         defer { temp.cleanUp() }

@@ -85,6 +85,24 @@ import Testing
         #expect(await store.lastQuarantined.isEmpty)
     }
 
+    @Test func unreadableRecordIsSkippedButNeverRenamed() async throws {
+        let temp = try TemporaryDirectory("history")
+        defer { temp.cleanUp() }
+        let store = JSONHistoryStore(directory: temp.url)
+        try await store.save(Fixtures.finnUndLissy)
+        try await store.save(Fixtures.annaUndBen)
+        let locked = store.folder(for: Fixtures.annaUndBenID).appending(path: "record.json")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: locked.path) }
+
+        #expect(try await store.loadAll().map(\.id) == [Fixtures.finnUndLissyID])
+        #expect(await store.lastQuarantined.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: locked.path))
+        // Readable again: the record is back, intact.
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: locked.path)
+        #expect(try await store.loadAll().count == 2)
+    }
+
     @Test func removeAndRemoveAllTouchOnlyWeddingFolders() async throws {
         let temp = try TemporaryDirectory("history")
         defer { temp.cleanUp() }
