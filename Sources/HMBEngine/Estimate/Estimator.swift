@@ -96,6 +96,8 @@ struct Estimator: Sendable {
     let constants: SearchConstants
     let learned: LearnedEstimates
     let concurrency: Int
+    /// The engine's one metric lane (§3.9), shared with a running job.
+    let lane: MetricLane
 
     /// What one estimate was, kept so a finished job can fold actual/estimated into κ.
     struct Record: Sendable {
@@ -118,7 +120,6 @@ struct Estimator: Sendable {
         let indices = Self.sampleIndices(count: photos.count)
         let perSample = Locked([[DeliveryID: Double]](repeating: [:], count: indices.count))
         if !lossy.isEmpty, !indices.isEmpty {
-            let lane = MetricLane(metric: primitives.metric)
             let failure = Locked<(any Error)?>(nil)
             let pool = WorkerPool(items: Array(indices.indices), count: min(concurrency, indices.count), qos: .userInitiated,
                                   name: "holdmybyte estimate", shouldContinue: { !cancel.isCancelled }) { slot, _ in
@@ -198,7 +199,7 @@ struct Estimator: Sendable {
                             try cancel.check()
                             let d = Targets.jpegPrior(target) * factor
                             let data = try p.jpeg.encode(mosaic, distance: d, subsampling: .s420, markers: [])
-                            points.append((log(d), try lane.score(try p.decoder.decode(encoded: data), against: ref)))
+                            points.append((log(d), try lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: cancel)))
                         }
                         let ln = ProxyCurve(points: points).inverse(target + constants.m0 - constants.bias,
                                                                     range: constants.lnDistanceRange)

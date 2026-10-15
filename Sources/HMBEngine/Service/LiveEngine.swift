@@ -9,6 +9,8 @@ public final class LiveEngine: EngineService {
     public let supportDirectory: URL
     public let options: EngineOptions
 
+    /// The one metric lane (§3.9): every GPU call of jobs and estimates goes through it.
+    let lane: MetricLane
     private let active = Locked<JobRunner?>(nil)
     /// Last estimate per photo set (fingerprint), for preflight and for folding actual/estimated into κ.
     private let estimateRecords = Locked<[String: [DeliveryID: Estimator.Record]]>([:])
@@ -24,6 +26,8 @@ public final class LiveEngine: EngineService {
         self.primitives = primitives
         self.supportDirectory = supportDirectory
         self.options = options
+        self.lane = MetricLane(metric: primitives.metric, maxLiveReferences: options.maxLiveReferences,
+                               serialize: options.serializeMetric)
     }
 
     /// The production engine: live primitives (WP1).
@@ -37,8 +41,12 @@ public final class LiveEngine: EngineService {
 
     public func scan(_ items: [URL]) -> AsyncThrowingStream<ScanUpdate, any Error> {
         AsyncThrowingStream { continuation in
+            let cancelled = Locked(false)
+            continuation.onTermination = { _ in cancelled.withLock { $0 = true } }
             let thread = Thread {
-                let result = Scanner().scan(items) { found in continuation.yield(.progress(found: found)) }
+                let result = Scanner().scan(items, isCancelled: { cancelled.snapshot }) { found in
+                    continuation.yield(.progress(found: found))
+                }
                 continuation.yield(.finished(result))
                 continuation.finish()
             }
@@ -53,7 +61,7 @@ public final class LiveEngine: EngineService {
     public func estimate(photos: [SourcePhoto], deliveries: [DeliveryPreset]) async throws -> [DeliveryID: DeliveryEstimate] {
         let token = CancelToken()
         let estimator = Estimator(primitives: primitives, constants: options.constants, learned: learned,
-                                  concurrency: options.estimateConcurrency)
+                                  concurrency: options.estimateConcurrency, lane: lane)
         let (estimates, records) = try await withTaskCancellationHandler {
             try await onDedicatedThread(name: "holdmybyte estimate") {
                 try estimator.estimate(photos: photos, deliveries: deliveries, cancel: token)
@@ -95,7 +103,7 @@ public final class LiveEngine: EngineService {
     public func run(_ request: JobRequest, resume: Bool) -> AsyncStream<EngineEvent> {
         AsyncStream { continuation in
             let runner = JobRunner(request: request, resume: resume, primitives: primitives, support: supportDirectory,
-                                   options: options, continuation: continuation) { [weak self] runner, outcome in
+                                   options: options, lane: lane, continuation: continuation) { [weak self] runner, outcome in
                 self?.finished(runner, outcome: outcome)
             }
             let accepted = active.withLock { current -> Bool in

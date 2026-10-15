@@ -27,8 +27,26 @@ status, measurements, deviations and questions for the lead.
 | 10 | Estimator live ±15 %, ≤ 5 s | **not verifiable yet**; test written and gated. Fakes: rules, archive formula, cancellation, κ learning | `EstimatorTests` (4), `LiveEngineTests.estimator…` |
 | 11 | Results ≤ 10 Hz, progress ≥ 1 Hz | **met** | `JobTests.eventCadence…`, `progressCoalescerUnit` |
 
-`swift build` and `swift test` are green, zero warnings. 62 WP2 tests (59 run with fakes, 3 live tests skipped
-until WP1 lands); whole package 126 tests passing.
+`swift build` and `swift test` are green, zero warnings. 70 WP2 tests (67 run with fakes, 3 live tests skipped
+until WP1 lands); whole package 134 tests passing.
+
+## Review fixes (independent review, same branch)
+
+`ReviewTests` (8) cover each of these:
+- **Metric lane waits are cancellable.** Workers queued behind a slow GPU score each spent one more score after a
+  pause/stop (6 workers on a 0.3 s metric: 1.54 s stop latency, over the 1.5 s budget); waiters now poll the token
+  and re-check it once they hold the lane (0.26 s). `LiveEngine` owns the one lane (§3.9) for jobs and estimates.
+- **Create More never writes into an existing folder** it has no record of (" 2"); retries and Create More use the
+  folder names the wedding's `layout.json` recorded ("Archive 2"), and the layout keeps earlier entries.
+- **Kept originals under removeLocation/removeAll** dropped nothing after EOI: MPF/CIPA preview images (own EXIF,
+  possibly GPS) leaked. They and the APP2 MPF index are now dropped; pixels stay identical.
+- **EXIF over 64 KB** (huge MakerNote) was silently dropped from JPEG outputs, losing the orientation; it is now
+  shrunk (MakerNote, thumbnail, then minimal) so orientation survives.
+- **Scanner** counted a file twice when a folder and its subfolder/file were both dropped; scans stop when the
+  stream's consumer goes away.
+- **Guarantee 2 test**: every delivered lossy file is re-decoded and re-scored against its variant; the score equals
+  the journaled one.
+- Pixels are released before the archive transcode (memory, §3.9).
 
 ## Measurements (debug build, shared machine)
 
@@ -52,8 +70,10 @@ No live timings exist yet (no live primitives). Machine load during the session 
 3. **Fresh run into an existing non-empty output folder** fails (`.failed(reason:)`). Preflight already resolves
    " 2"; the engine cannot move the job elsewhere because `PhotoResult.outRelativePath` is relative to the
    request's folder. An existing *empty* folder is used.
-4. **Appending modes** (resume, `appendToExistingFolder`, `onlyPhotos` retry) reuse existing delivery folders;
-   only fresh runs add " 2". Retries therefore land in the original "Couple" folder.
+4. **Appending modes** (resume, `appendToExistingFolder`, `onlyPhotos` retry) use the delivery folder names the
+   wedding's journal recorded (`layout.json`), so retries land in "Couple 2" if that is what was used. Without a
+   record, resume and retries reuse an existing folder of the preset's name; Create More gets " 2" instead of
+   writing into a folder it did not make (review fix).
 5. **Crash between rename and journal**: on resume a byte-identical file at the planned name is adopted, not
    rewritten as "… 2" (guarantee 6: no duplicates). Never deletes or overwrites anything.
 6. **Keep-original**: `keepAll` copies the source bytes verbatim (no COM marker added); other policies rewrite the

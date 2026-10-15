@@ -18,6 +18,7 @@ final class JobRunner: @unchecked Sendable {
     let primitives: EnginePrimitives
     let support: URL
     let options: EngineOptions
+    let lane: MetricLane
     let cancel = CancelToken()
     private let continuation: AsyncStream<EngineEvent>.Continuation
     private let onFinish: @Sendable (JobRunner, JobOutcome) -> Void
@@ -33,10 +34,10 @@ final class JobRunner: @unchecked Sendable {
     }
 
     init(request: JobRequest, resume: Bool, primitives: EnginePrimitives, support: URL, options: EngineOptions,
-         continuation: AsyncStream<EngineEvent>.Continuation,
+         lane: MetricLane, continuation: AsyncStream<EngineEvent>.Continuation,
          onFinish: @escaping @Sendable (JobRunner, JobOutcome) -> Void) {
         self.request = request; self.resume = resume; self.primitives = primitives; self.support = support
-        self.options = options; self.continuation = continuation; self.onFinish = onFinish
+        self.options = options; self.lane = lane; self.continuation = continuation; self.onFinish = onFinish
     }
 
     func start() {
@@ -119,6 +120,11 @@ final class JobRunner: @unchecked Sendable {
         // Output folder and delivery folders (resolved once, remembered in layout.json for resumes).
         let previous = resume ? Journal.load(support: support, wedding: wedding) : nil
         let appendMode = resume || request.appendToExistingFolder || request.onlyPhotos != nil
+        // Retries and Create More reuse the folder names an earlier run of this wedding resolved ("Couple 2").
+        let earlierLayout = previous?.layout ?? (appendMode ? Journal.load(support: support, wedding: wedding)?.layout : nil)
+        // Only a resume or a retry writes into a delivery folder that is already there without a record of it;
+        // Create More adds new delivery folders, with " 2" on a clash (§2.0 principle 5, S5).
+        let reuseUnknownFolders = resume || request.onlyPhotos != nil
         let outputExisted = fm.fileExists(atPath: output.path)
         if outputExisted, !appendMode {
             let contents = (try? fm.contentsOfDirectory(atPath: output.path))?.filter { !$0.hasPrefix(".") } ?? []
@@ -134,21 +140,21 @@ final class JobRunner: @unchecked Sendable {
         }
         var folders: [String: String] = [:]
         for preset in request.deliveries {
-            if let known = previous?.layout?.deliveryFolders[preset.id.rawValue],
+            if let known = earlierLayout?.deliveryFolders[preset.id.rawValue],
                fm.fileExists(atPath: output.appending(path: known, directoryHint: .isDirectory).path) {
                 folders[preset.id.rawValue] = known
                 continue
             }
             do {
                 folders[preset.id.rawValue] = try writer.makeDirectory(in: output, named: preset.folderName,
-                                                                      reuseExisting: appendMode)
+                                                                      reuseExisting: reuseUnknownFolders)
             } catch let error as OutputError {
                 if let pause = pauseReason(for: error, remainingBytes: nil) { return paused(pause, results: [:]) }
                 throw error
             }
         }
-        let layout = JobLayout(deliveryFolders: folders,
-                               createdOutputFolder: previous?.layout?.createdOutputFolder ?? !outputExisted)
+        let layout = JobLayout(deliveryFolders: (earlierLayout?.deliveryFolders ?? [:]).merging(folders) { _, new in new },
+                               createdOutputFolder: earlierLayout?.createdOutputFolder ?? !outputExisted)
         let journal: Journal
         if resume, previous != nil, let reopened = try Journal.reopen(support: support, wedding: wedding, layout: layout,
                                                                        request: request) {
@@ -190,11 +196,8 @@ final class JobRunner: @unchecked Sendable {
         // Carried results go out with the first (forced) emission, through the coalescer.
         state.withLock { $0.pending = carriedInScope.sorted { ($0.photo, $0.delivery.rawValue) < ($1.photo, $1.delivery.rawValue) } }
 
-        let context = PipelineContext(primitives: primitives,
-                                      lane: MetricLane(metric: primitives.metric, maxLiveReferences: options.maxLiveReferences,
-                                                       serialize: options.serializeMetric),
-                                      writer: writer, constants: options.constants, outputFolder: output,
-                                      sourceRoots: request.sourceRoots, cancel: cancel, adoptIdentical: appendMode)
+        let context = PipelineContext(primitives: primitives, lane: lane, writer: writer, constants: options.constants,
+                                      outputFolder: output, sourceRoots: request.sourceRoots, cancel: cancel, adoptIdentical: appendMode)
         let pipeline = PhotoPipeline(context: context)
         let photosByIndex = Dictionary(uniqueKeysWithValues: scope.map { ($0.id.index, $0) })
         let order = scope.map(\.id.index).filter { todo[$0] != nil }

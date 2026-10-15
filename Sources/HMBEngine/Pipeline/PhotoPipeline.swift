@@ -100,11 +100,16 @@ struct PhotoPipeline {
             return resized
         }
 
-        for plan in plans {
+        for (position, plan) in plans.enumerated() {
             try c.cancel.check()
             let preset = plan.preset
             let result: PhotoResult
             if !preset.isLossy {
+                // The archive needs only the file bytes: once no lossy delivery is left, the pixels go (§3.9 memory).
+                if !plans[position...].contains(where: \.preset.isLossy) {
+                    source = nil
+                    variants.removeAll()
+                }
                 let product = try JXLArchive.make(info, sourceExtension: photo.url.pathExtension, jxl: c.primitives.jxl,
                                                   cancel: c.cancel, label: photo.relativePath)
                 result = try write(product.data, ext: product.ext, photo: photo, plan: plan) { url, bytes in
@@ -149,7 +154,7 @@ struct PhotoPipeline {
             search = try c.lane.withReference(v, cancel: c.cancel) { ref -> SearchResult in
                 func verify(_ data: Data) throws -> Double {
                     try c.cancel.check()
-                    return try c.lane.score(try p.decoder.decode(encoded: data), against: ref)
+                    return try c.lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: c.cancel)
                 }
                 func jpegProbe(_ d: Double, _ chroma: ChromaSubsampling) throws -> ProbeRecord {
                     try c.cancel.check()
@@ -163,7 +168,7 @@ struct PhotoPipeline {
                                 proxyScore: { d, chroma in
                                     try c.cancel.check()
                                     let data = try p.jpeg.encode(mosaic, distance: d, subsampling: chroma, markers: [])
-                                    return try c.lane.score(try p.decoder.decode(encoded: data), against: mosaicRef)
+                                    return try c.lane.score(try p.decoder.decode(encoded: data), against: mosaicRef, cancel: c.cancel)
                                 },
                                 probe: jpegProbe)
                             return try MosaicSearch.search(target: target, oracle: oracle, keepOriginalAllowed: keepAllowed,

@@ -38,8 +38,11 @@ struct Scanner: Sendable {
         var readable = true
     }
 
-    func scan(_ items: [URL], progress: (Int) -> Void) -> ScanResult {
+    /// `isCancelled` is polled during the walk and before the metadata pass; a cancelled scan reads no metadata
+    /// and returns no photos (its stream consumer is gone).
+    func scan(_ items: [URL], isCancelled: () -> Bool = { false }, progress: (Int) -> Void) -> ScanResult {
         var candidates: [Candidate] = []
+        var seen = Set<String>()                 // a file reached twice (a folder and its subfolder both dropped)
         var rawCount = 0
         var otherCount = 0
         var otherExtensions = Set<String>()
@@ -51,7 +54,8 @@ struct Scanner: Sendable {
                                       .fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
 
         func consider(_ url: URL, root: URL, values: URLResourceValues) {
-            guard values.isRegularFile == true, values.isSymbolicLink != true, values.isHidden != true else { return }
+            guard values.isRegularFile == true, values.isSymbolicLink != true, values.isHidden != true,
+                  seen.insert(url.standardizedFileURL.path).inserted else { return }
             let ext = url.pathExtension.lowercased()
             if Self.acceptedExtensions.contains(ext), let kind = Self.kind(forExtension: ext) {
                 candidates.append(Candidate(url: url, root: root, byteCount: Int64(values.fileSize ?? 0),
@@ -67,6 +71,7 @@ struct Scanner: Sendable {
         }
 
         for item in items {
+            if isCancelled() { break }
             let url = item.standardizedFileURL
             guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isSymbolicLink != true else { continue }
             if values.isDirectory == true {
@@ -77,6 +82,7 @@ struct Scanner: Sendable {
                 guard let walker = fm.enumerator(at: url, includingPropertiesForKeys: keys,
                                                  options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { continue }
                 for case let child as URL in walker {
+                    if isCancelled() { break }
                     guard let v = try? child.resourceValues(forKeys: Set(keys)) else { continue }
                     if v.isSymbolicLink == true { if v.isDirectory == true { walker.skipDescendants() }; continue }
                     if v.isDirectory == true {
@@ -94,6 +100,7 @@ struct Scanner: Sendable {
 
         // Metadata, in parallel (properties only; no pixel decode).
         let facts = Locked([Facts](repeating: Facts(), count: candidates.count))
+        if isCancelled() { candidates.removeAll() }
         let list = candidates
         let chunk = 16
         DispatchQueue.concurrentPerform(iterations: (list.count + chunk - 1) / chunk) { block in

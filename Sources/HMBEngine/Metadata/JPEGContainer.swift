@@ -1,5 +1,6 @@
 // JPEG segment surgery (§3.7): reading the header segments and rewriting them losslessly. The entropy-coded
-// data (SOS to the end of the file, including anything after EOI) is copied byte for byte.
+// data (SOS to EOI) is copied byte for byte. Data after EOI (MPF/CIPA preview images, which carry their own EXIF
+// and possibly GPS) is kept only on request: a metadata policy that removes data drops it, with the MPF index.
 import Foundation
 
 enum JPEGContainer {
@@ -32,6 +33,7 @@ enum JPEGContainer {
     static let xmpExtensionPrefix = Data("http://ns.adobe.com/xmp/extension/\u{0}".utf8)
     static let iccPrefix = Data("ICC_PROFILE\u{0}".utf8)
     static let photoshopPrefix = Data("Photoshop 3.0\u{0}".utf8)
+    static let mpfPrefix = Data("MPF\u{0}".utf8)
     /// Largest payload of one segment (the 2-byte length counts itself).
     static let maxPayload = 65_533
 
@@ -99,16 +101,45 @@ enum JPEGContainer {
 
     /// Rewrites the metadata of `source` losslessly: SOI, the APP0 JFIF segment if present, then `markers`
     /// (already in output order), then every remaining non-policy segment in its original order, then the scan
-    /// data verbatim.
-    static func rewrite(_ source: Data, markers: [Segment]) throws -> Data {
+    /// data verbatim. Without `keepTrailingData`, everything after EOI and the APP2 MPF index that points into it
+    /// are dropped (if no EOI is found, the rest of the file is kept as it is).
+    static func rewrite(_ source: Data, markers: [Segment], keepTrailingData: Bool = true) throws -> Data {
         let parsed = try parse(source)
+        let end = keepTrailingData ? nil : endOfImage(source, scanOffset: parsed.scanOffset)
         var out = Data([0xFF, 0xD8])
         let app0 = parsed.segments.prefix { $0.code == 0xE0 }
         for s in app0 { try append(s, to: &out) }
         for s in markers { try append(s, to: &out) }
-        for s in parsed.segments.dropFirst(app0.count) where !isPolicyOwned(s) { try append(s, to: &out) }
-        out.append(source.subdata(in: (source.startIndex + parsed.scanOffset)..<source.endIndex))
+        for s in parsed.segments.dropFirst(app0.count) where !isPolicyOwned(s) {
+            if end != nil, s.code == 0xE2, s.payload.starts(with: mpfPrefix) { continue }
+            try append(s, to: &out)
+        }
+        out.append(source.subdata(in: (source.startIndex + parsed.scanOffset)..<(source.startIndex + (end ?? source.count))))
         return out
+    }
+
+    /// Offset just past the EOI marker of the primary image, walking the scans from the first SOS: entropy-coded
+    /// bytes (with 0xFF00 stuffing and RSTn), and the segments between progressive scans by their lengths.
+    static func endOfImage(_ data: Data, scanOffset: Int) -> Int? {
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Int? in
+            let d = raw.bindMemory(to: UInt8.self)
+            var i = scanOffset
+            while i + 1 < d.count {
+                guard d[i] == 0xFF else { i += 1; continue }
+                let code = d[i + 1]
+                switch code {
+                case 0x00, 0xD0...0xD7: i += 2                         // stuffed byte, restart marker
+                case 0xFF: i += 1                                      // fill byte
+                case 0xD9: return i + 2
+                default:                                               // SOS, DHT, DQT, DRI, DNL, APPn, COM
+                    guard i + 4 <= d.count else { return nil }
+                    let length = Int(d[i + 2]) << 8 | Int(d[i + 3])
+                    guard length >= 2 else { return nil }
+                    i += 2 + length
+                }
+            }
+            return nil
+        }
     }
 
     static func append(_ s: Segment, to out: inout Data) throws {

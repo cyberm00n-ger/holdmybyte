@@ -144,8 +144,11 @@ original base name), de-duplicated case-insensitively with " 2", so names never 
 extension follows what is written: `.jpg`, `.webp`, `.jxl`, or the source's own extension for an archive copy.
 
 **Folders.** A fresh run creates the output folder (it must not exist or must be empty) and each delivery folder
-(" 2" if it exists). Resume, Create More (`appendToExistingFolder`) and retries (`onlyPhotos`) reuse existing
-delivery folders. The resolved names are stored in `layout.json` so a resume writes into the same folders.
+(" 2" if it exists). The resolved names are stored in `layout.json`. Resume, Create More
+(`appendToExistingFolder`) and retries (`onlyPhotos`) first use the folder names an earlier run of the wedding
+recorded there ("Couple 2"); otherwise resume and retries reuse an existing delivery folder of the preset's name,
+while Create More never writes into an existing folder it has no record of (" 2", §2.0 principle 5). The new
+`layout.json` keeps the earlier entries, so a later retry still finds every delivery's folder.
 
 **Journal.** `<support>/Jobs/<weddingID>/request.json` (the `JobRequest`), `layout.json`, `journal.jsonl` (one
 `PhotoResult` per line after the rename; `fsync` every 10 lines, at pause/stop and at the end) and the empty
@@ -182,7 +185,11 @@ over completion intervals, seeded with the first interval / worker count; nil un
 - Orientation is preserved under every policy; a source without EXIF but with an orientation gets a minimal EXIF.
 - JPEG order: APP1 Exif, APP1 XMP, APP2 ICC chain, APP13, `COM "holdmybyte 2.0"`. WebP: icc/exif/xmp to the encoder.
 - Keep-original: `keepAll` → the source bytes verbatim; other policies → `JPEGContainer.rewrite` (SOI, APP0, new
-  segments, every non-metadata segment in order, then SOS…EOF byte for byte). Tests prove identical decoded pixels.
+  segments, every non-metadata segment in order, then SOS…EOI byte for byte). Data after EOI (MPF/CIPA preview
+  images, which carry their own unfiltered EXIF and GPS) and the APP2 MPF index are dropped under these policies.
+  Tests prove identical decoded pixels.
+- EXIF larger than one APP1 segment (a huge MakerNote) loses the MakerNote, then the thumbnail, then everything but
+  Orientation/Artist/Copyright, so the orientation always survives in JPEG outputs.
 
 ## 6. Archive (§3.6)
 
@@ -212,8 +219,11 @@ deliveries by their share of worker seconds (jobs with ≥ 12 photos). `LearnedE
 - Workers: `Thread`s with 8 MB stacks pulling photo indices from a locked FIFO; `.automatic` = clamp(cores − 2,
   2…8) at `.userInitiated`, `.gentle` = 2 at `.utility`. A coordinator thread runs the event loop; the cooperative
   pool only sees `AsyncStream` and continuations.
-- `MetricLane`: one lock around every metric call (prepare, score, release); references above 8 MP take one of 3
-  slots (counting semaphore, cancellable wait). A worker holds at most one full-resolution reference.
+- `MetricLane`: one per `LiveEngine`, shared by the running job and by estimates; one lock around every metric
+  call (prepare, score, release). Waiting for the lock polls the cancel token every 20 ms, and the token is checked
+  again once the lock is held, so queued workers do not each spend a GPU score after a pause. References above
+  8 MP take one of 3 slots (counting semaphore, cancellable wait). A worker holds at most one full-resolution
+  reference, and releases its pixels before the archive transcode.
 - Determinism: names fixed up front, encoders single-threaded per image (WP1), no randomness or time in outputs;
   1 vs 3 workers produce byte-identical folders (`determinismTwoRunsAreByteIdentical`).
 

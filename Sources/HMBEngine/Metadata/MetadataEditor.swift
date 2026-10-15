@@ -47,7 +47,7 @@ enum MetadataEditor {
     /// JPEG marker order: APP1 Exif, APP1 XMP (+ extension), APP2 ICC chain, APP13, COM "holdmybyte 2.0".
     static func jpegMarkers(_ m: Output) -> [JPEGMarker] {
         var markers: [JPEGMarker] = []
-        if let exif = m.exif, exif.count + JPEGContainer.exifPrefix.count <= JPEGContainer.maxPayload {
+        if let exif = m.exif.flatMap(exifFittingOneSegment) {
             markers.append(JPEGMarker(code: 0xE1, payload: JPEGContainer.exifPrefix + exif))
         }
         if let xmp = m.xmp, xmp.count + JPEGContainer.xmpPrefix.count <= JPEGContainer.maxPayload {
@@ -62,16 +62,36 @@ enum MetadataEditor {
         return markers
     }
 
-    /// Keep-original copy under a policy (§3.7): verbatim for keepAll; otherwise the segments are replaced and
-    /// the entropy-coded data is copied byte for byte.
+    /// Keep-original copy under a policy (§3.7): verbatim for keepAll; otherwise the segments are replaced, the
+    /// entropy-coded data is copied byte for byte, and embedded preview images after EOI (MPF), which carry their
+    /// own unfiltered EXIF, are dropped.
     static func keptOriginal(_ info: SourceInfo, policy: MetadataPolicy) throws -> Data {
         guard policy != .keepAll else { return info.fileBytes }
         let markers = jpegMarkers(output(for: info, policy: policy, colour: .keepProfile))
             .filter { $0.code != 0xFE }                 // a kept original is not a holdmybyte encode
-        return try JPEGContainer.rewrite(info.fileBytes, markers: markers.map { .init(code: $0.code, payload: $0.payload) })
+        return try JPEGContainer.rewrite(info.fileBytes, markers: markers.map { .init(code: $0.code, payload: $0.payload) },
+                                         keepTrailingData: false)
     }
 
     // MARK: EXIF
+
+    /// EXIF that fits one APP1 segment. Oversized EXIF (usually a huge MakerNote) loses the MakerNote, then the
+    /// thumbnail, then everything but Orientation/Artist/Copyright, so the orientation always survives (§3.7).
+    static func exifFittingOneSegment(_ exif: Data) -> Data? {
+        let limit = JPEGContainer.maxPayload - JPEGContainer.exifPrefix.count
+        if exif.count <= limit { return exif }
+        guard var doc = try? TIFFDocument(parsing: exif) else { return nil }
+        doc.exif?.removeAll { $0.tag == TIFFDocument.Tag.makerNote }
+        var data = doc.serialized()
+        if data.count <= limit { return data }
+        doc.ifd1 = nil
+        doc.thumbnail = nil
+        data = doc.serialized()
+        if data.count <= limit { return data }
+        let orientation = doc.entry(TIFFDocument.Tag.orientation).flatMap { TIFFDocument.integer($0, big: doc.bigEndian) } ?? 1
+        data = minimalEXIF(from: exif, orientation: orientation)
+        return data.count <= limit ? data : orientationOnly(orientation)
+    }
 
     static func ensureOrientation(_ exif: Data?, orientation: Int) -> Data? {
         guard let exif else { return orientation == 1 ? nil : orientationOnly(orientation) }
