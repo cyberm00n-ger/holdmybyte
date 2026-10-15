@@ -8,10 +8,10 @@ measurements (with machine load), every deviation, and the questions for the lea
 ### HMBStore (`Sources/HMBStore/`)
 | Type | Behaviour |
 |---|---|
-| `JSONHistoryStore` (actor) | `<dir>/<uuid>/record.json`, atomic writes (`Data.write(.atomic)`). `loadAll` decodes all records in parallel (`concurrentPerform`) and sorts newest wedding first (wedding date, then creation date). An undecodable file is renamed `record.json.corrupt` (` 2`, ` 3`… if taken), logged, skipped; `lastQuarantined` lists them. `remove`/`removeAll` only delete folders named like a wedding UUID inside the store directory. Default dir `~/Library/Application Support/holdmybyte/Weddings`. |
+| `JSONHistoryStore` (actor) | `<dir>/<uuid>/record.json`, atomic writes (`Data.write(.atomic)`). `loadAll` decodes all records in parallel (`concurrentPerform`) and sorts newest wedding first (wedding date, then creation date). An undecodable file is renamed `record.json.corrupt` (` 2`, ` 3`… if taken), logged, skipped; `lastQuarantined` lists them. A file that cannot be read (permissions, I/O) is skipped and left in place. `remove`/`removeAll` only delete folders named like a wedding UUID inside the store directory. Default dir `~/Library/Application Support/holdmybyte/Weddings`. |
 | `UserDefaultsPresetStore` | JSON under `holdmybyte.presets.v1` / `holdmybyte.defaultOn.v1`. Order kept exactly; duplicate ids dropped; a missing built-in is appended (built-ins cannot be deleted); `defaultOn` filtered to existing ids, no duplicates. Unreadable data → shipped defaults, bytes kept under `<key>.corrupt`. |
 | `UserDefaultsSettingsStore` | JSON under `holdmybyte.settings.v1`; unreadable → `AppSettings()`, bytes kept under `<key>.corrupt`. |
-| `DiskThumbnailCache` | `CGImageSourceCreateThumbnailAtIndex` (embedded thumbnail first, transform applied), clamped to ≤ 320 px. Cache file `~/Library/Caches/eu.sebastianhaas.holdmybyte/Thumbnails/<sha256(path|size|mtime)>.jpg`, written atomically (temp + rename). `size` = clamped requested pixel size, `mtime` = `stat(2)` mtime with ns (URL resource values are cached per URL instance and would miss a re-export); if the source is unreachable, `SourcePhoto.modified` stands in so ejected-drive history keeps its thumbnails. NSCache in front, concurrent requests for one key share a single generation, at most 4 generations at once on a utility `OperationQueue`. `statistics` exposes hit/miss counters. |
+| `DiskThumbnailCache` | `CGImageSourceCreateThumbnailAtIndex` (embedded thumbnail first, transform applied), clamped to ≤ 320 px. Cache file `~/Library/Caches/eu.sebastianhaas.holdmybyte/Thumbnails/<sha256(path|size|mtime)>.jpg`, written atomically (temp + rename). `size` = clamped requested pixel size, `mtime` = `stat(2)` mtime in whole milliseconds (URL resource values are cached per URL instance and would miss a re-export); if the source is unreachable, `SourcePhoto.modified` stands in so ejected-drive history keeps its thumbnails. NSCache in front, concurrent requests for one key share a single generation, at most 4 generations at once on a utility `OperationQueue`. `statistics` exposes hit/miss counters. |
 | `StoreLocations` | The three default locations. |
 
 All store tests use temporary directories and private UserDefaults suites.
@@ -36,7 +36,7 @@ Rules worth knowing:
   Counter: "Hardest n of K" while spot-checking in Lowest Score First within the first K, else "n of N".
 - `updateCompare` re-establishes invariants (no original ⇒ no Show Original/latch/Differences; divider and centre
   clamped; position in range). Y/D/`\` are no-ops without the original; the mode picker is disabled.
-- `savePreset` refuses invalid presets, appends new ones (and checks them in an open setup draft), closes a matching
+- `savePreset` refuses invalid presets, appends new ones (and, when added through Setup's Add Delivery…, checks them in the open setup draft), closes a matching
   `state.sheet`, persists. `deletePreset` refuses built-ins. `movePresets`/`setDefaultOn` keep `defaultOn` in preset
   order. `restoreDefaultDeliveries` restores the four built-ins (shipped definitions and order) and
   `defaultOn = [couple, website]`; **custom deliveries are kept** (after the built-ins, unchecked) — nothing is
@@ -90,9 +90,9 @@ weddings?" / "Delivered photos are not touched." [Clear] [Cancel].
 
 ## Tests and acceptance
 
-`swift test`: **123 tests in 21 suites, all green** (repo-wide, including WP0's), zero warnings in WP4 files
-(`swift build --build-tests` after touching every WP4 file). WP4 adds 4 store suites (20 tests incl. WP0's
-in-memory suite) and 6 UI suites under `Tests/HMBUITests/Compare/`.
+`swift test`: **129 tests in 22 suites, all green** (after the review below; 123 in 21 before) (repo-wide, including WP0's), zero warnings in WP4 files
+(`swift build --build-tests` after touching every WP4 file). WP4 adds 4 store suites (22 tests incl. WP0's
+in-memory suite) and 7 UI suites under `Tests/HMBUITests/Compare/`.
 
 | §5.4 criterion | Status | Evidence |
 |---|---|---|
@@ -150,7 +150,7 @@ in-memory suite) and 6 UI suites under `Tests/HMBUITests/Compare/`.
   `model.openCompare(route)` (it pushes `detailPath`). `CompareView` renders `state.toast` while Compare is shown —
   please don't overlay the same toast in RootView while `state.compare != nil`. Menu commands can call the compare
   additions listed above. After `savePreset` adds/edits a preset during setup, the draft's estimate for it is not
-  refreshed by WP4 — please re-estimate on `state.presets` changes (a new preset is already checked in the draft).
+  refreshed by WP4 — please re-estimate on `state.presets` changes (a preset added through Add Delivery… is already checked in the draft).
 - **WP2 (`comparePair`):** (1) return images with the EXIF orientation applied (display orientation, like the
   thumbnails) — the UI has no orientation info for a photo; (2) return fully decoded images
   (`kCGImageSourceShouldCacheImmediately` or bitmap-backed), otherwise Core Animation decodes 45 MP on the main
@@ -174,3 +174,20 @@ in-memory suite) and 6 UI suites under `Tests/HMBUITests/Compare/`.
   cached-thumbnail placeholder as the first frame, or require the 1/4-scale preview (see Measurements)?
 - **Q4** `restoreDefaultDeliveries` keeps custom deliveries (restores built-ins and the default set only). Confirm,
   or should it delete custom presets too (would need a confirmation alert)?
+- **Q5** Copy not in §2.4: when `comparePair` throws (e.g. the deliveries folder was moved, S12), Compare shows the
+  capsule "This photo can’t be compared. The delivered file couldn’t be opened." Confirm or supply the copy.
+- **Q6** Settings ▸ General accepts an empty "Folder name" or rename pattern (§2.4 S16 defines no validation). The
+  consumers (WP3 naming / WP2 output) must fall back to the defaults for an empty pattern, or S16 needs a rule.
+
+## Review fixes (independent review, after the three implementation commits)
+
+| Found | Fix | Test |
+|---|---|---|
+| Thumbnail key used the mtime as a `Double`; `stat(2)` and the recorded `SourcePhoto.modified` (URL resource value, JSON round-trip) differ in the last bit for ~50 % of nanosecond mtimes, so an ejected drive's history lost its thumbnails | key on whole milliseconds | `subSecondModificationTimeStillMatchesTheRecordedDate` (fails before) |
+| `JSONHistoryStore` renamed a record it merely could not *read* (permissions, I/O) to `.corrupt`, hiding a valid wedding for good | only `DecodingError` quarantines; unreadable files are skipped and left in place | `unreadableRecordIsSkippedButNeverRenamed` (fails before) |
+| `ComparePairLoader.cancel()` (Compare disappears, e.g. window closed) left the current photo half-loaded: `show` of the same key returned early → HUD spinner forever; a pending differences request blocked recomputation | `cancel()` marks the load interrupted and clears the pending differences; `show` resumes | `ComparePairLoaderTests` (both fail before) |
+| `comparePair` failure was stored but never shown; the grid thumbnail stood in for the delivered photo | centred capsule (Q5) | — (view) |
+| Holding `\` while the window lost key: the key-up went elsewhere, the original stayed shown and every later press was inert | hold ends on `didResignKey` and on any new non-repeat press; a latch is kept | `lostKeyUpEndsTheHoldButKeepsALatch` |
+| Edit Delivery's long-edge field was `value:`-bound (parsed on commit only): Save stayed enabled while an out-of-range number was being typed, and Return could save the stale value | text-bound `longEdgeText`, validated per keystroke | `longEdgeRange` (extended) |
+| `savePreset` checked a new delivery in the open setup even when it was added in Settings | only Setup's Add Delivery… (`state.sheet == .editDelivery(_, isNew: true)`) checks it | `aDeliveryAddedInSettingsIsNotCheckedInTheOpenSetup` |
+
