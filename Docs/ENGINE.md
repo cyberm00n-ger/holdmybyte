@@ -1,8 +1,8 @@
 # holdmybyte engine (WP2)
 
 How the live engine turns a scanned wedding into verified deliveries. `Docs/SPEC.md` §3 is binding; this file
-documents how WP2 implemented it, the constants in use, what was validated and what still has to be fitted
-with the live primitives (WP1).
+documents how WP2 implemented it, the constants in use and what was validated. Since the integration pass
+(2026-10-15, branch `int-engine`) it also records the live fits and the search change of Docs/DECISIONS.md D-ENG-3…5.
 
 Code: `Sources/HMBEngine/{Search,Pipeline,Jobs,IO,Metadata,Estimate,Service}`.
 Tests: `Tests/HMBEngineTests/Pipeline` (fakes; live tests gated on `EnginePrimitives.live()` plus `HMB_HOLDOUT` /
@@ -60,12 +60,52 @@ as `.encodeFailed`, so no pair is ever silently missing.
 - `prior(T) = exp(0.693 + 0.06·(74 − T))` (74 → 2.00, 85 → 1.03, 90 → 0.77) — **unchanged from §3.4**.
   The holdout replay (§3.4 below) shows it needs no refit for Balanced; a refit on the full wedding is pending the
   live primitives.
-- `qPrior(T) = clamp(75 + 1.5·(T − 70), 5…100)` — 75 at T = 70 as specified; the **slope 1.5 is a placeholder**
-  until it is fitted on the holdout with live WebP (§7).
+- `qPrior(T) = clamp(80 + 1.1·(T − 70), 5…100)` — **fitted live** on the holdout at 2560 px (median q at which each
+  photo reaches T: 65 → 72, 70 → 80, 75 → 86, 80 → 90, 85 → 94). The spec's 75 at T = 70 was 5 q low. A/B on the
+  holdout Website delivery (release `hmb compress`, load 5–7): probes 3.42 → **2.74** mean (max 4 → 5), 6.564 → 6.578 MB
+  (+0.2 %, different landing points), every photo ≥ 70 (D-ENG-5).
+- `prior(T)` for JPEG is unchanged. Resized JPEG lands well below it at high targets (1440 px, median d reaching 85:
+  0.60 vs prior 1.03; 3/19 photos need 4:4:4); DirectSearch's secant finds it in 3.6 probes on average (Social,
+  holdout). Not refitted: one size and one target are too little data for a size-dependent prior.
 
 ### 3.2 `MosaicSearch` (full-size JPEG, image ≥ 2048×1024)
 
-Constants (binding, unchanged): M0 = 0.6, M1 = 0.15, BIAS = −1.5, STOP = 0.5, MAX_FULL = 3, RESCUE = 2,
+Two aims share the policy around them (rescue budget, fail-open 4:4:4, keep-original, chroma gate):
+`SearchConstants.aim = .mosaicExact` (**default since D-ENG-3**) and `.proxyCurve` (the §3.4 loop, below).
+
+#### `.mosaicExact` (default)
+
+Why: jpegli's score falls in **steps** at fixed distances for every photo (largest drops on the holdout between
+d 1.221–1.252, 2.065–2.117, 3.158–3.238 and 3.404–3.490, 0.6–1.6 points each), and the mosaic steps at the same
+distances. A piecewise-linear curve through 3 mosaic points bridges the steps, so the bias it measures at one probe is
+wrong at the next. Measured on dense live curves (`HoldoutMeasureTests`), **full − mosaic at the same distance** is
+nearly constant per photo: sd 0.10–0.36 over d 1.4…3.0, about −0.6 per ln d, holdout median −1.1 (range −1.9…−0.1).
+
+```
+x = ln d, multiples of 1e-4 (the solver's and the probes' distances are identical → deterministic)
+m(x)    : mosaic encoded at d (no markers), scored against the mosaic reference; cached per search
+bias(x) : before any probe            −1.1 (exactBiasPrior)
+          probes on one side of T     b_ref + (−0.6)·(x − x_ref), ref = probe closest to T   (exactBiasSlope)
+          pass P and fail F, x_P<x_F  linear between b_P and b_F                         (final-step interpolation)
+          with b_k = s_k − m(x_k) measured at every full probe
+solve(g): largest x in [lo, hi] with m(x) + bias(x) ≥ g: bracket from cached mosaic points (3 seeds at
+          prior·{0.8, 1, 1.25}), extend by ≥ 0.02 steps, regula falsi (safeguarded 20 %) until the bracket is < 0.004
+          or 6 evaluations (exactSolverEvals) → the passing end, else the interpolated root
+probe 1 : solve(T + 0)                                        (exactFirstMargin)
+loop    : while probes < MAX_FULL (3)
+            stop if a passing probe has s − T < 0.15          (exactStop)
+            lo = max passing x + 0.003, hi = min failing x − 0.003 (exactMinStep); stop if lo > hi
+            x = solve(T + 0.03) in [lo, hi]                    (exactMargin; + exactFailStep·(fails − 1), default 0)
+rescue  : nothing passed → first rescue probe solve(T + 0.3) below the smallest failing x (exactRescueMargin),
+          then d × 0.8; never below D_MIN; at most RESCUE = 2 (replaces the generic ×0.8 rescue for this aim)
+```
+
+Cost: 3 seeds + ≤ 6 mosaic evaluations per aimed probe (holdout mean **12 mosaic encodes per photo**, ~0.03 s each on
+2 MP) against one full probe saved (~0.7 CPU-s: encode 0.39 + decode 0.28 + score 0.05).
+
+#### `.proxyCurve` (the §3.4 loop)
+
+Constants (binding for this aim, unchanged): M0 = 0.6, M1 = 0.15, BIAS = −1.5, STOP = 0.5, MAX_FULL = 3, RESCUE = 2,
 D_MIN = 0.5; bisection over ln d ∈ [ln 0.3, ln 8], 60 iterations.
 
 ```
@@ -114,7 +154,41 @@ quantum of a range bound snap to that exact bound.
   search on the same variant (`encoder = "jpegli (fallback)"`, extension `.jpg`). The sharp-YUV preparation is done
   once per (photo, delivery).
 
-### 3.4 Validation (fakes and measured curves)
+### 3.4 Validation (fakes, measured curves and live A/B)
+
+**Live A/B (authoritative, D-ENG-3).** `SearchABTests` (opt-in: `HMB_SEARCH_AB='name:key=value,…;…'`) runs the real
+`MosaicSearch.search` per variant on the 19 holdout photos with live probes (jpegli + Couple's Package markers +
+ImageIO decode + Metal SSIMULACRA2), memoising probes per distance across variants. The `.proxyCurve` row reproduces
+the pipeline's `LiveEngineTests` run byte for byte, and the shipped row equals the pipeline's run after the change
+(50,239,686 bytes). Release build, load 5–17 (`uptime` 20:48–20:56). Targets: 74 for all 19 (smooth regime).
+
+| Variant | Bytes | Probes mean / max | Overshoot mean / max | Mosaic evals / photo |
+|---|---|---|---|---|
+| `.proxyCurve`, §3.4 constants (before) | 51.379 MB | 2.53 / 3 | 0.535 / 2.54 | 3 |
+| `.mosaicExact`, margins 0 / 0.1, stop 0.3 | 50.472 MB | 2.00 / 3 | 0.201 / 0.56 | 11.4 |
+| + no probe within 0.003 ln d (wasted same-step probes) | 50.497 MB | 1.74 / 3 | 0.208 / 0.65 | 11.3 |
+| + margin 0.05, stop 0.2 | 50.410 MB | 1.74 / 3 | 0.204 / 0.65 | 11.7 |
+| **+ margin 0.03, stop 0.15 (shipped)** | **50.240 MB** | **1.95 / 3** | **0.137 / 0.65** | 12.0 |
+| shipped, stop 0.1 | 50.213 MB | 2.05 / 3 | 0.134 / 0.65 | 12.3 |
+| shipped, stop 0.2 | 50.280 MB | 1.84 / 3 | 0.150 / 0.65 | 11.4 |
+| shipped, bias prior −1.0 / −1.2 | 50.286 / 50.345 MB | 2.05 / 1.84 | 0.177 / 0.191 | 12.5 / 11.7 |
+| shipped, bias slope −0.3 / −0.9 | 50.331 / 50.266 MB | 1.89 / 1.95 | 0.174 / 0.162 | 12.2 / 11.9 |
+| shipped, first margin +0.1 / −0.1 | 50.345 / 50.286 MB | 1.84 / 2.05 | 0.191 / 0.177 | 11.7 / 12.5 |
+| shipped, min step 0.002 / 0.004 / 0.006 | 50.261 / 50.285 / 50.519 MB | 1.95 / 1.95 / 1.68 | — | — |
+| shipped, margin 0 (×0.8 rescue) | 50.558 MB | 2.05 / 4 | 0.241 / 2.11 | 12.1 |
+| shipped, margin 0 (model rescue, shipped) | 50.276 MB | 2.05 / 4 | 0.151 / 0.65 | 12.3 |
+| shipped, fail-step 0.12 / 0.2 | 50.321 / 50.337 MB | 1.95 / 1.95 | 0.168 / 0.173 | 12.1 |
+| shipped, max 2 full probes | 50.366 MB | 1.89 / 3* | 0.182 / 0.65 | 11.7 |
+
+\* includes a rescue probe. Neighbouring settings move the total by ±0.1 MB (noise of 19 photos); the shipped point is
+in the middle of a flat region rather than the single best row. The remaining overshoot is mostly jpegli's steps:
+0042 lands at 74.65 because the step at d ≈ 2.09 jumps from 74.65 to below 74. Below: perfect-search bound 49.91 MB
+(interpolated curves, zero overshoot), old engine at the v2 floor 50.30 MB (G1, D-ENG-1).
+
+Live pipeline after the change (`LiveEngineTests.holdoutBalanced…`, debug, load 5.3): **50.24 MB, 1.95 probes mean,
+max 3, 19/19 ≥ 74**, wall 17.8 s (before: 51.38 MB, 2.53, 17.8 s at load 26).
+
+**Earlier checks (fakes, curves from the v2 experiments; `.proxyCurve` unless noted)**
 
 | Check | Result |
 |---|---|
@@ -123,9 +197,11 @@ quantum of a range bound snap to that exact bound.
 | Keep-original threshold | triggers at best ≥ 0.95 × source, not 200 bytes below it |
 | Fail-open | 4:4:4 only after 4:2:0 + rescue fail; ≤ 10 probes |
 
-The replay's absolute bytes are only as good as the interpolation (the measured points mix two experiment runs), so
-the **live** gates remain authoritative: `LiveEngineTests.holdoutBalancedMeetsTargetsProbesAndBytes` (every photo ≥
-target, mean ≤ 2.2, max ≤ 5, total ≤ 50.31 MB) runs as soon as WP1's `live()` works.
+The replay's absolute bytes are only as good as the interpolation (the measured points mix two experiment runs, and
+their scores are on the old libjpeg-turbo reading), which is why it is pinned to `.proxyCurve`: it predicted 49.74 MB,
+the live run of the same algorithm gave 51.38 MB. The analytic family also runs with `.mosaicExact` (2.17 probes mean,
+0 failing, ≤ 3 + 2 per chroma). The **live** gate is `LiveEngineTests.holdoutBalancedMeetsTargetsProbesAndBytes`:
+every photo ≥ target, mean ≤ 2.2, max ≤ 5, total ≤ 50,301,670 bytes (D-ENG-1).
 
 ## 4. Writing, journal and resume (§3.8)
 
@@ -199,20 +275,35 @@ Huffman JPEG sources: `transcodeLossless(effort: 7)`, `reconstructJPEG`, SHA-256
 
 ## 7. Estimates (§3.10)
 
-Sample S = min(12, n) at ⌊(i + 0.5)·n/S⌋, processed on up to `estimateConcurrency` threads.
+Sample S = min(12, n) at ⌊(i + 0.5)·n/S⌋, processed on up to `estimateConcurrency` threads; within a sample the
+variants are made first (one sRGB conversion, one resize per size) and the deliveries are then estimated in parallel.
 
 | Kind | Estimate |
 |---|---|
-| Full-size JPEG | mosaic proxy curve (3 encodes + scores), mosaic encoded at d* = exp(inv(T + M0 − BIAS)), × pixel ratio × κ + marker bytes; capped at the source size when keep-original would apply |
+| Full-size JPEG | mosaic proxy curve (3 encodes + scores), mosaic encoded at d* = exp(inv(G)), × pixel ratio × κ + marker bytes; G = T + exactMargin − exactBiasPrior (= T + 1.13) for `.mosaicExact`, T + M0 − BIAS for `.proxyCurve`; capped at the source size when keep-original would apply |
 | Full-size WebP | mosaic encoded at qPrior × pixel ratio × κ |
-| Resized | real resize + one encode at prior / qPrior × κ |
+| Resized (and small full-size) | **the delivery's real DirectSearch on the sample's variant** (WebP with its JPEG fallback; JPEG 4:2:0 → d 0.5 → 4:4:4), best passing bytes × κ (D-ENG-4) |
 | Archive | 0.78 × JPEG bytes + 1.0 × other bytes, over all photos |
 
-Totals × n/S. **κ defaults are 1.0 for every kind — not yet fitted** (needs live primitives on the holdout:
-median actual/estimate per kind). Seconds per photo default to the §3.11 budgets (full 1.12 s, resized 0.28 s,
-archive 0.67 s). Learning (UserDefaults, keys `holdmybyte.estimate.kappa.<kind>` / `.seconds.<kind>`, EMA α = 0.3)
-happens after a fresh, complete, finished job whose photo set was estimated in this session; time is attributed to
-deliveries by their share of worker seconds (jobs with ≥ 12 photos). `LearnedEstimates.reset()` clears the keys.
+Totals × n/S. **κ defaults stay 1.0** — fitted on the holdout (all 19 photos, 12 sampled), actual / estimate:
+
+| Delivery | Before (one probe at the prior; G = T + 2.1) | After | |
+|---|---|---|---|
+| Couple's Package (full JPEG) | 0.947 | **0.996** | per-photo sd of the full-size ratio 3 % (dense curves) |
+| Website (WebP 2560) | 1.315 | **1.024** | prior q 75 vs ~80 needed; search overshoot (directStop 1.0) |
+| Social (JPEG 1440, 85) | 1.434 | **1.038** | 3/19 photos reach 85 only with 4:4:4 |
+| Archive | 1.000 | 1.000 | |
+
+Time (`hmb estimate`, release, wall incl. process start, Metal set-up and scan of 19 files): all four deliveries
+4.15–4.53 s at load 5.7–5.8 (19.4 CPU-s), Couple + Website 3.98–4.63 s, Couple alone 0.98 s, Website alone 3.61 s
+(14.6 CPU-s: ~2.7 WebP encodes of 0.27 s per sample). Before the change all four took about 2.5 s; the WebP search is
+the price of the accuracy. The test gate (≤ 5 s) only applies on a quiet machine (load < 3), which this session never
+had; `LiveEngineTests` measured 5.28 s in a debug build at load 6.2 and 11.9 s at load 69.
+
+Seconds per photo default to the §3.11 budgets (full 1.12 s, resized 0.28 s, archive 0.67 s). Learning (UserDefaults,
+keys `holdmybyte.estimate.kappa.<kind>` / `.seconds.<kind>`, EMA α = 0.3) happens after a fresh, complete, finished
+job whose photo set was estimated in this session; time is attributed to deliveries by their share of worker seconds
+(jobs with ≥ 12 photos). `LearnedEstimates.reset()` clears the keys.
 
 ## 8. Concurrency (§3.9)
 
@@ -227,10 +318,10 @@ deliveries by their share of worker seconds (jobs with ≥ 12 photos). `LearnedE
 - Determinism: names fixed up front, encoders single-threaded per image (WP1), no randomness or time in outputs;
   1 vs 3 workers produce byte-identical folders (`determinismTwoRunsAreByteIdentical`).
 
-## 9. To do once WP1 lands
+## 9. Live status (2026-10-15, integration pass)
 
-1. Run `swift test` with `HMB_HOLDOUT` and `HMB_TEST_PHOTOS` set: the three `LiveEngineTests` (holdout Balanced
-   gate, live determinism 6 × 4, estimator ±15 % / ≤ 5 s).
-2. Fit and record here: `qPrior(T)` slope (WebP q at which each holdout photo reaches 70 / 85 at 2560 px), κ per kind
-   (median actual/estimate on the holdout), and check `prior(T)` against the full-wedding Balanced run.
-3. Record live timings with `uptime` load.
+All three `LiveEngineTests` pass with `HMB_HOLDOUT` and `HMB_TEST_PHOTOS` set: holdout Balanced (50.24 MB, 1.95 / 3
+probes, 19/19 ≥ 74), live determinism 6 × 4 (byte-identical), estimator (±4 %). Fits recorded in §3.1 and §7; the
+full-wedding runs are in `Docs/BENCHMARKS.md`. Opt-in measurement tools: `HoldoutMeasureTests` (`HMB_CURVES_OUT`,
+`HMB_RESIZED_OUT`: dense live curves as JSON) and `SearchABTests` (`HMB_SEARCH_AB`, optional `HMB_SEARCH_AB_TRACE`);
+run them in release (`swift test -c release -Xswiftc -enable-testing --filter …`).

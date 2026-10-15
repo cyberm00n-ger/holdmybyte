@@ -96,6 +96,8 @@ What this means:
 - ImageIO is the conservative choice of the three: it reads lowest, so a file that passes under ImageIO passes under
   libjpeg-turbo (browsers, most web tools). jpegli's own decoder reads 1.5 points higher; it would be anti-conservative
   for every common viewer and must not be used for verification.
+- **Decided (2026-10-15, Docs/DECISIONS.md D-ENG-1/2): option (a).** ImageIO stays; G1 is measured against the old
+  engine held to the v2-measured floor (re-run at raised targets: 50,301,670 bytes, +1.0 % over its Classic output).
 - Options for the lead (WP1 has not changed E6): (a) keep ImageIO and accept/re-baseline G1 (+~2 %); (b) decode
   candidates the way the old engine did (libjpeg-turbo semantics: ISLOW IDCT + fancy upsampling). libjpeg-turbo is not
   vendored (E6 rejected it for speed and the symbol clash); jpegli's decoder *is* in the archive but reads +1.5, so it

@@ -13,10 +13,12 @@ func exitWith(_ error: any Error) -> Never {
     exit(error is HMBCommand.UsageError ? 64 : 1)
 }
 
-/// The live engine with its own support folder, so CLI journals never mix with the app's.
+/// The live engine with its own support folder, so CLI journals never mix with the app's. `--workers N` arrives as
+/// HMB_WORKERS (exported by `CommandRunner` before this runs; Docs/DECISIONS.md D-ENG-6).
 func liveEngine() throws -> LiveEngine {
     let support = FileManager.default.temporaryDirectory.appending(path: "holdmybyte-cli-\(getpid())", directoryHint: .isDirectory)
-    return try LiveEngine(supportDirectory: support)
+    let workers = ProcessInfo.processInfo.environment["HMB_WORKERS"].flatMap(Int.init).map { min(64, max(1, $0)) }
+    return LiveEngine(primitives: try .live(), supportDirectory: support, options: EngineOptions(workerCount: workers))
 }
 
 func printJSON<T: Encodable>(_ value: T) throws {
