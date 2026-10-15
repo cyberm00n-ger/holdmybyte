@@ -24,6 +24,7 @@ set. The binary itself is `swift run hmb-snapshot` and is configured only throug
 | `HMB_SNAPSHOT_LOCALE` | `en_DE` | locale (English text, German number formatting) |
 | `HMB_SNAPSHOT_SETTLE` | `0.7` | seconds each state runs before capture (animations, `.task`s, thumbnails) |
 | `HMB_FIXTURE_PHOTOS` | unset | folder of local photos used as thumbnails (outputs stay local) |
+| `HMB_SNAPSHOT_DUMP` | unset | print the view tree before and after the capture rewrites (harness debugging) |
 
 Outputs: `<id>-light.png`, `<id>-dark.png` (at the backing scale, 2×), `<id>@780x560-<appearance>.png` for
 `setup-ready`, `running-mid`, `done-three` and `compare-split-fit`, `manifest.json` (per image: id, spec section,
@@ -56,7 +57,8 @@ composites is not available that way, so before each capture the harness rewrite
 |---|---|---|
 | Liquid Glass (`NSGlassEffectView`: sidebar, toolbar platters) | opaque white, hides its content | a flat stand-in (window background blended 7 % toward the label colour, hairline, same corner radius); the glass's content view moves into it |
 | `CABackdropLayer`, `NSScrollPocket` (blur behind bars, scroll-edge effect) | solid blocks | hidden |
-| Vibrant text and symbols (`CATintedImage` contents, plus-lighter / plus-darker) | not drawn at all | flattened to plain images: primary labels at 88 % white (dark) / black (light), secondary proportionally |
+| Vibrant text and symbols (`CATintedImage` contents, plus-lighter / plus-darker) | not drawn at all | flattened to plain images in the image's own `tint` × the layer's `contentsMultiplyColor`; plus-lighter/darker text at 88 % white (dark) / black (light), secondary proportionally |
+| Glass content moved into the stand-in | constraints to views outside the glass are lost (the search field shrank to a sliver) | frames that changed are pinned back |
 | Inactive window look (offscreen windows are never key) | grey traffic lights, grey default buttons and selection | the harness process reports the app active and every window key and main |
 | Sheets (`.sheet`) | a separate `SheetPresentationWindow` that never attaches to an invisible parent | captured separately and composited centred under the toolbar with a shadow |
 | `hmbGlass` / `hmbGlassButtonStyle` | (WP0) fall back to `.regularMaterial` / `.bordered(Prominent)` under `isSnapshotRendering` | none needed; materials render |
@@ -79,6 +81,7 @@ below was not repeated locked; over SSH the process must run in the user's GUI s
 | 2026-10-15 | WP5 branch, release, settle 0.7 s | 92 (42 ids × 2 + 4 × 2) | 81.4 s | 7.28 13.71 17.54 → 4.58 11.35 16.29 | WP3/WP4 views still WP0 stubs: 39 light window renders count as blank (the stub is a centred `ContentUnavailableView` on white) |
 | 2026-10-15 | WP5 branch, debug, settle 0.45 s | 92 | 67.6 s | 13.99 11.27 9.46 | same stubs |
 | 2026-10-15 | `--self-test`, release | 2 renders, 8 checks | 2 s | 4.42 | 8/8 pass |
+| 2026-10-15 | `int-app` (all packages merged), release, settle 0.7 s | 92 (42 ids × 2 + 4 × 2) | 102.5 s | 18.41 17.36 17.95 → 15.51 16.64 17.60 (Lightroom and builds running) | exit 0, 0 blank (largest one-colour share 92.2 %); reviewed below |
 
 ## Review checklist (§6.3)
 
@@ -87,48 +90,59 @@ elements · dark mode legible, no hard-coded colours · the 780×560 renders wit
 
 | Id | Section | Light | Dark | 780×560 | Notes |
 |---|---|---|---|---|---|
-| `empty` | S1 | pending | pending | | |
-| `empty-error-raw` | S2 | pending | pending | | |
-| `empty-error-none` | S2 | pending | pending | | |
-| `drag-target` | S3 | pending | pending | | |
-| `preparing` | S4 | pending | pending | | |
-| `setup-ready` | S4 | pending | pending | pending | |
-| `setup-estimating` | S4 | pending | pending | | |
-| `setup-warn-precompressed` | S5 | pending | pending | | |
-| `setup-blocked-disk` | S5 | pending | pending | | |
-| `setup-create-more` | S4, F3 | pending | pending | | |
-| `drop-on-setup` | S3 | pending | pending | | |
-| `edit-delivery` | S6 | pending | pending | | sheet composited over setup |
-| `queued` | S7 | pending | pending | | |
-| `running-early` | S8 | pending | pending | | |
-| `running-mid` | S8 | pending | pending | pending | |
-| `paused-user` | S9 | pending | pending | | |
-| `paused-drive` | S9 | pending | pending | | |
-| `paused-disk` | S9 | pending | pending | | |
-| `stopped` | S9 | pending | pending | | |
-| `interrupted` | S9 | pending | pending | | |
-| `done-single` | S10 | pending | pending | | |
-| `done-three` | S10 | pending | pending | pending | |
-| `done-issues` | S11 | pending | pending | | |
-| `done-kept-original` | S10 | pending | pending | | |
-| `done-missing-folder` | S12 | pending | pending | | see WP5-NOTES Q2 |
-| `failed` | S13 | pending | pending | | |
-| `compare-split-fit` | S14 | pending | pending | pending | |
-| `compare-split-100` | S14 | pending | pending | | inspector shown |
-| `compare-side` | S14 | pending | pending | | |
-| `compare-original-held` | S14 | pending | pending | | |
-| `compare-diff` | S14 | pending | pending | | |
-| `compare-no-original` | S14 | pending | pending | | |
-| `compare-spotcheck-toast` | S14, F2 | pending | pending | | |
-| `history-search` | S15 | pending | pending | | search "lissy" |
-| `history-empty-search` | S15 | pending | pending | | search "Amsterdam" |
-| `settings-general` | S16 | pending | pending | | |
-| `settings-deliveries` | S16 | pending | pending | | |
-| `settings-advanced` | S16 | pending | pending | | |
-| `menubar-extra` | S17 | pending | pending | | |
-| `alert-stop` | S9, S18 | pending | pending | | |
-| `alert-quit` | S18 | pending | pending | | |
-| `alert-remove` | S2.3, S18 | pending | pending | | |
+| `empty` | S1 | pass | pass |  |  |
+| `empty-error-raw` | S2 | pass | pass |  |  |
+| `empty-error-none` | S2 | pass | pass |  |  |
+| `drag-target` | S3 | pass | pass |  |  |
+| `preparing` | S4 | pass | pass |  | scan shimmer in the mosaic and estimate column |
+| `setup-ready` | S4 | pass | pass | pass | notices now sit under the header; bottom bar opaque offscreen |
+| `setup-estimating` | S4 | pass | pass |  |  |
+| `setup-warn-precompressed` | S5 | pass | pass |  |  |
+| `setup-blocked-disk` | S5 | pass | pass |  | the block is visible next to the disabled button (was below the fold) |
+| `setup-create-more` | S4, F3 | pass | pass |  | was the empty drop zone (wrong selection in the harness) |
+| `drop-on-setup` | S3 | pass | pass |  |  |
+| `edit-delivery` | S6 | pass | pass |  | WP4's sheet, composited; "Size" and "px" were white (tint fix) |
+| `queued` | S7 | pass | pass |  |  |
+| `running-early` | S8 | pass | pass |  | queued/working cells greyscale (saturation filter does not render offscreen) |
+| `running-mid` | S8 | pass | pass | pass | progress bar teal (was the system blue: `.tint(nil)`); sidebar counts no longer truncate at 780 |
+| `paused-user` | S9 | pass | pass |  |  |
+| `paused-drive` | S9 | pass | pass |  | Resume disabled (drive not mounted) |
+| `paused-disk` | S9 | pass | pass |  |  |
+| `stopped` | S9 | pass | pass |  |  |
+| `interrupted` | S9 | pass | pass |  |  |
+| `done-single` | S10 | pass | pass |  | one tile spans the width |
+| `done-three` | S10 | pass | pass | pass | tiles fill the row (3 → 3 columns; 2 × 2 at 780); size lines wrap instead of truncating |
+| `done-issues` | S11 | pass | pass |  |  |
+| `done-kept-original` | S10 | pass | pass |  | showed done-issues' issues before (presentation memo); now the kept-original note |
+| `done-missing-folder` | S12 | pass | pass |  | banner shown (harness marks the folder missing); Compare/Finder/Spot-Check disabled |
+| `failed` | S13 | pass | pass |  |  |
+| `compare-split-fit` | S14 | pass | pass | pass | the photo was missing (pair not preloaded); duplicate title removed |
+| `compare-split-100` | S14 | pass | pass |  | inspector beside the canvas; capture date in the app's date style |
+| `compare-side` | S14 | pass | pass |  |  |
+| `compare-original-held` | S14 | pass | pass |  |  |
+| `compare-diff` | S14 | pass | pass |  |  |
+| `compare-no-original` | S14 | pass | pass |  | Split, Side by Side and Differences disabled |
+| `compare-spotcheck-toast` | S14, F2 | pass | pass |  | "Hardest 12 of 12" |
+| `history-search` | S15 | pass | pass |  | search text itself not drawn offscreen (see limits) |
+| `history-empty-search` | S15 | pass | pass |  |  |
+| `settings-general` | S16 | pass | pass |  |  |
+| `settings-deliveries` | S16 | pass | pass |  |  |
+| `settings-advanced` | S16 | pass | pass |  |  |
+| `menubar-extra` | S17 | pass | pass |  | laid out like the menu (AppKit draws the real one) |
+| `alert-stop` | S9, S18 | pass | pass |  | copy from `AppAlert.copy` |
+| `alert-quit` | S18 | pass | pass |  |  |
+| `alert-remove` | §2.3, S18 | pass | pass |  | Cancel default, Remove destructive |
+
+Reviewed on 2026-10-15 (run above) by the integration lead, every PNG against §2 (layout, copy, symbols, tokens, light
+and dark). Defects found and fixed are in the notes and in `Docs/DECISIONS.md`.
+
+**Known limits of the offscreen renders** (the app is right; verified against a window-server capture):
+- the sidebar search field's text is not drawn (the clear button shows that it has text);
+- SwiftUI materials (`.ultraThinMaterial` score pills on the lowest-five thumbnails, the drop capsule, the Compare HUD
+  and side labels) render without their blur, so their text sits on the photo;
+- the sidebar's running ProgressView ring draws in the label colour, and `.tertiary` delivery symbols are faint in
+  dark;
+- `.saturation(0)` does not render: queued/working grid cells get a greyscale thumbnail while snapshot rendering.
 
 ## What each state contains
 
@@ -156,5 +170,8 @@ All states use `Fixtures` (Finn und Lissy: 535 photos, 10.95 GB, ILCE-7RM5, July
   `compare-spotcheck-toast`: lowest-score order, position K − 1 = 11 and the toast.
 - **History:** search "lissy" (match) and "Amsterdam" (no match).
 - **Settings:** `settingsTab` general / deliveries / advanced, history of 38 weddings.
-- **Other:** `menubar-extra` = `StatusMenu` for the running job with the window closed; alerts from the alert copy
-  (WP5-NOTES Q1).
+- **Other:** `menubar-extra` = `StatusMenu` for the running job with the window closed; alerts from `AppAlert.copy`.
+- **Harness hooks:** a scenario's `missingFolders` make the inert platform report those folders missing
+  (`done-missing-folder`); Compare states get their pair from the scenario's FixtureEngine before the first frame
+  (`CompareView.preload`); `Tokens.forcesMulticolorAccent` renders the teal accent; `HMB_SNAPSHOT_DUMP=1` prints the
+  view tree before and after the capture rewrites.

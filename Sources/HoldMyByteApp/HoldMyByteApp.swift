@@ -24,7 +24,10 @@ struct HoldMyByteApp: App {
                 .hmbAccent()
         }
 
-        MenuBarExtra(isInserted: Binding(get: { model.showsTransientStatusItem },
+        // Read here, in the scene body, so observation re-evaluates the scene when the job starts or ends or the
+        // window opens or closes (a read only inside the binding's getter is not tracked by the body).
+        let statusItemShown = model.showsTransientStatusItem
+        MenuBarExtra(isInserted: Binding(get: { statusItemShown },
                                          set: { model.showsTransientStatusItem = $0 })) {
             StatusMenu(model: model)
         } label: {
