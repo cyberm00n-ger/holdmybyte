@@ -17,6 +17,11 @@ public struct SearchConstants: Sendable, Hashable {
     public var distanceLimits: ClosedRange<Double> = 0.1...25
     /// DirectSearch: stop at the first passing probe with s − T below this, or after `directMaxProbes`.
     public var directStop = 1.0
+    /// DirectSearch for JPEG (Social, small full-size): the same rule with a tighter window. jpegli's distance is
+    /// continuous, so a narrower window costs ~0.4 probes on a ≤ 5 MP variant and saves ~2 % of the bytes (holdout,
+    /// Social 1440 ≥ 85: 6.158 → 6.016 MB, overshoot 0.44 → 0.24, probes 3.58 → 3.95; Docs/DECISIONS.md D-ENG-8). WebP
+    /// keeps `directStop`: its integer q steps are coarser than a tighter window (holdout Website: no gain, more probes).
+    public var directStopJPEG = 0.5
     public var directMaxProbes = 5
     /// E2 chroma gate: also search 4:4:4 when chromaEnergy ≥ this. Off unless `chromaGate` is set.
     public var chromaGateThreshold = 2.42

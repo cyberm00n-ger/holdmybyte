@@ -97,7 +97,7 @@ probes and estimate errors do not depend on load (outputs are deterministic). Re
 | G2 | not evaluated (load). Same session, alternating: holdmybyte 13.0 s / 16.6 s, old `squeeze -p classic` 53.4 s / 63.9 s (ratio 0.24 / 0.26; gate ≤ 0.6) | load 16.1 → 38.0 | same |
 | G3 | bytes **pass** — 1,352,439,246 bytes ≤ 1.37 GB; 535/535 ≥ 74 (min 74.00, median 74.11, max 75.29), 0 kept original, 0 failed; probes 1.96 mean (1: 100, 2: 356, 3: 79); timing not evaluated: **375.1 s** (0.70 s/photo, 1.93 CPU-s/photo; gate 600 s; old 1044 s); peak RSS 5.73 GB | load 29.1 → 9.0, thermal nominal, Lightroom running | `runs/20261015-211016-wedding-couple` |
 | G4 | not run | | |
-| G5 | **fail on bytes** — Website 172.3 MB (> 165), min 70.00, probes 2.87; Social 183.7 MB (> 165), min 85.00, probes 3.56, 171/535 at 4:4:4. Image data alone: 152.0 MB and 154.4 MB (see below) | load 7.7 → 35.5, thermal fair | `runs/20261015-211705-wedding-all` |
+| G5 | **fail on bytes** — Website 172.3 MB (> 165), min 70.00, probes 2.87; Social 183.7 MB (> 165), min 85.00, probes 3.56, 171/535 at 4:4:4. Image data alone: 152.0 MB and 154.4 MB (see below). **Superseded by the verification pass below: bytes pass (D-ENG-8)** | load 7.7 → 35.5, thermal fair | `runs/20261015-211705-wedding-all` |
 | G6 | bytes **pass** — 8.559 GB ≤ 8.60 GB, 535/535 byte-exact; time alone not run | same | same |
 | G7 | **fail on memory** — peak RSS **18.36 GB** (gate 8 GB); estimates **pass**: couple −3.1 %, website +2.0 %, social −0.3 %, archive +0.2 % (estimate 4.09 s); wall 613.1 s not evaluated (gate 840 s; old 2370 s in four runs) | same | same |
 | G8 | not run | | |
@@ -127,7 +127,7 @@ Website 20.3 MB of metadata (38 KB per file), Social 29.3 MB (55 KB). Image data
 thumbnail or IPTC is a product decision for the owner, not an engine change. Website also overshoots by 0.65 on
 average (DirectSearch accepts s − T < 1.0, WebP q is an integer).
 
-**G7 memory analysis.** Peak RSS comes from the archive: `hmb compress` of the 19 holdout photos with Archive only
+**G7 memory analysis** (integration pass; the conclusion is refuted by the verification pass below). Peak RSS comes from the archive: `hmb compress` of the 19 holdout photos with Archive only
 peaks at **12.5 GB** (11.3 GB footprint, 8 workers, load 18), Couple only at 4.9 GB. One libjxl lossless JPEG
 transcode of a 45 MP photo at effort 7 holds about 1.4 GB, and with 8 workers 8 transcodes can coincide. Not fixed in
 this pass: a transcode gate (at most 3–4 concurrent) trades against G6's 6-minute budget and needs a quiet-machine
@@ -145,3 +145,33 @@ measurement; recorded as an open item for the lead.
 **Plumbing check, 2026-10-15** (load 9.17 / 15.89 / 18.62, Lightroom state not recorded): the old engine,
 `squeeze -p classic`, on 2 holdout photos: 2.15 s wall, 1.80 s user, peak RSS 2.39 GB; outputs byte-identical to the
 baseline (1,940,281 and 2,002,271 bytes, scores 74.1 and 74.8). `OldEngineLiveTests` repeats this on one photo.
+
+## Verification pass (2026-10-15, branch `int-engine`, independent verifier)
+
+Release `hmb` from the working tree (commit 84c8184 + the D-ENG-7…9 changes), MacBookPro18,4, Lightroom running, never
+quiet: no timing gate is evaluated and every time is an upper bound. Outputs and reports in the verifier's scratch
+folder (deleted after reading; summaries here).
+
+| Check | Result | Load (1-min, before → after) |
+|---|---|---|
+| G1 re-run, integrator's build, holdout, Couple | **pass, byte-identical** to `runs/20261015-212903-holdout` (all 19 SHA-256 equal): 50,239,686 bytes, 19/19 ≥ 74, probes 1.95; 13.6 s, peak RSS 5.05 GB | 5.99 → 6.23 |
+| G3 / G5 / G6 / G7, wedding 535, all four, one run, final build | Couple **1.352 GB**, 535/535 ≥ 74 (SHA-256 identical to the integrator's Couple folder); Website **163.41 MB** (min 70.0) and Social **163.46 MB** (min 85.0): **G5 bytes pass**; Archive 8.559 GB, 535/535 byte-exact (sizes identical); estimates archive +0.2 %, couple −4.3 %, social −0.7 %, website +2.0 %; wall 474.9 s (6.13 CPU-s/photo); **peak RSS 18.54 GB, footprint 18.01 GB: G7 fails** | 7.08 → 10.65 |
+| Same, with `HMB_MEMORY_BUDGET`-equivalent 6.4 GB budget | identical bytes; wall 624.5 s; peak RSS 19.49 GB, footprint 13.63 GB | 6.21 → 8.26 |
+| G9 after all verifier runs | `shasum -a 256` of all 535 sources identical to `runs/wedding-sha256-before.txt`; no file newer than the manifest in the source folder | 22:30 |
+
+**G5 (D-ENG-8).** Embedded previews (EXIF IFD1 thumbnail, Photoshop IRB 0x0409/0x040C) measured in the integration
+outputs: Website 8.87 MB, Social 8.87 + 8.85 MB. Dropping them under `removeLocation` and narrowing the JPEG
+DirectSearch window to 0.5 (holdout A/B: Social −2.3 %, WebP no gain) brings both under 165 MB with 1.5 MB margin.
+
+**G7 (D-ENG-7).** Not fixed. Capping concurrent transcodes does not get there: with an opt-in shared budget for
+references and transcodes, 80 wedding photos (all four, 8 workers) peak at 12.14 GB RSS unbudgeted and still 9.09 GB
+with room for only two heavy allocations (wall 91 → 172 s); Archive alone on the holdout drops 12.5 → 8.5 GB at
+6.4 GB but takes ×1.5 the time (8.8 → 13.6 s), a G6 risk. The lossy workers (Couple only, holdout: 5.2 GB RSS,
+7.8 GB footprint) and malloc's retained free regions make up the rest (ENGINE §8). The budget ships off; the gate
+needs per-worker memory work or an owner exception.
+
+**Tests.** Full `swift test` with env.sh sourced: 333 tests pass at load 8.4 → 10.5 (after D-ENG-9). Before D-ENG-9
+the same suite failed 3 tests at load 7–38: `pauseResumeStop`, `startNowInsteadPausesTheCurrentJob` (fixture job
+finished before the intent) and the scanner's 500 files/s budget (asserted below load 10, failed at ~10). One later
+run under extra I/O load (a parallel 11 GB checksum) also failed `estimateIsCancellable` (1.64 s vs 1.5 s) and
+`startWhileScanningStartsWhenScanEnds` (10 s timeout); both passed 3/3 alone and in the next full run.

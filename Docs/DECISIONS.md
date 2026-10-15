@@ -58,3 +58,33 @@ holdout photos reach 85 at 1440 px only with 4:4:4, which no single 4:2:0 probe 
 ## D-ENG-6 · 2026-10-15 · `hmb --workers` is honoured (WP5 Q3)
 
 `hmb` reads `HMB_WORKERS` (set by `--workers`) and passes it as `EngineOptions.workerCount`; the app never sets it.
+
+## D-ENG-7 · 2026-10-15 · Memory: optional budget, no default throttle; G7 needs structural work (verifier, engine lead)
+
+`MemoryBudget` (weighted, cancellable, shared by full-resolution references at 36 B/px and archive transcodes at
+33 B/px) is added but **off by default** (`EngineOptions.memoryBudget = nil`; `HMB_MEMORY_BUDGET` for `hmb` tuning
+runs). Variants that no later delivery needs are dropped per photo. **Why off:** at 6.4 GB it cuts Archive-only peak
+RSS 12.5 → 8.5 GB (holdout) but costs ×1.5 wall time (G6 projection ~380 s at load 7 vs 360 s gate), and it does not
+fix G7: 80 wedding photos, all four, still peak at 9.1 GB RSS with only two heavy allocations allowed (172 s vs 91 s),
+and the wedding all four peaked at 19.5 GB with 6.4 GB. The integrator's reading ("the archive is the cause; capping
+transcodes fixes it") is refuted: the lossy workers and malloc's retained free regions carry the rest (ENGINE §8). The
+§3.9 budget (8 GB at 8 workers, 45 MP) needs per-worker memory work (streamed or tiled jpegli encode and candidate
+decode, fewer full-resolution copies) or an owner-accepted exception.
+
+## D-ENG-8 · 2026-10-15 · G5: no embedded previews under removeLocation; JPEG DirectSearch window 0.5 (SPEC §3.7/§3.5 deviation)
+
+(a) `removeLocation` drops embedded preview images: the EXIF IFD1 thumbnail and Photoshop IRB resources 0x0409/0x040C
+(IPTC 0x0404 and every other resource stay byte for byte; keepAll is untouched). They are copies of the *source* (not
+colour-converted, not resized), the old engine shipped none, and on the wedding they were 8.9 MB of Website and
+17.7 MB of Social. Same precedent as dropping MPF previews in kept originals. (b) `directStopJPEG = 0.5` (WebP keeps
+`directStop` 1.0): holdout Social −2.3 % bytes, +0.4 probes; WebP got worse with a tighter window. Result on the
+wedding (all four, one run): Website 172.3 → **163.4 MB**, Social 183.7 → **163.5 MB**, both ≤ 165 MB; minima 70.0 /
+85.0; estimates within ±4.3 %. Image data and the floors are unchanged. Reversible by the owner: dropping (a) puts
+G5 back to a fail unless the gate is restated as image bytes.
+
+## D-ENG-9 · 2026-10-15 · Load-sensitive tests
+
+The scanner throughput budget (≥ 500 files/s) is asserted only at 1-minute load < 3 (§3.11 quiet machine; it failed
+at load ~10 in the full suite). `AppModelFlowTests` / `ShellTests` that pause, stop or queue a running FixtureEngine job
+use 0.05 s per photo (was 0.004: the 40-photo job could finish before the intent under load, so `pauseResumeStop` and
+`startNowInsteadPausesTheCurrentJob` failed in full-suite runs). Test-only; no product code changed.

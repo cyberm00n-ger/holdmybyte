@@ -3,9 +3,11 @@
 //
 // | Policy         | EXIF                                           | XMP                                   | IPTC     |
 // | keepAll        | verbatim                                       | verbatim                              | verbatim |
-// | removeLocation | drop GPS IFD, BodySerial, LensSerial, MakerNote| drop exif:GPS*, aux:(Lens)SerialNumber,| verbatim |
-// |                |                                                | exifEX:BodySerialNumber               |          |
+// | removeLocation | drop GPS IFD, BodySerial, LensSerial, MakerNote| drop exif:GPS*, aux:(Lens)SerialNumber,| verbatim¹|
+// |                | and the IFD1 thumbnail¹                        | exifEX:BodySerialNumber               |          |
 // | removeAll      | new: Orientation, Artist, Copyright            | only dc:rights, dc:creator            | dropped  |
+// ¹ D-ENG-8: embedded preview images (EXIF IFD1, Photoshop IRB 0x0409/0x040C) are dropped under removeLocation; the
+//   IPTC record (IRB 0x0404) and every other resource stay verbatim. keepAll keeps them.
 // ICC: the source profile verbatim, or sRGB when converted. Orientation is preserved under every policy.
 import CoreGraphics
 import Foundation
@@ -37,7 +39,8 @@ enum MetadataEditor {
                           xmpExtension: xmpExtension, iptc: iptc, icc: icc)
         case .removeLocation:
             return Output(exif: exifRemovingLocation(info.exif, orientation: info.orientation),
-                          xmp: info.xmp.flatMap(xmpRemovingLocation), xmpExtension: [], iptc: iptc, icc: icc)
+                          xmp: info.xmp.flatMap(xmpRemovingLocation), xmpExtension: [],
+                          iptc: iptc.compactMap(irbRemovingThumbnails), icc: icc)
         case .removeAll:
             return Output(exif: minimalEXIF(from: info.exif, orientation: info.orientation),
                           xmp: info.xmp.flatMap(xmpKeepingRights), xmpExtension: [], iptc: [], icc: icc)
@@ -110,8 +113,45 @@ enum MetadataEditor {
         doc.ifd0.removeAll { $0.tag == TIFFDocument.Tag.gpsPointer || $0.tag == TIFFDocument.Tag.subIFDs }
         let dropped: Set<UInt16> = [TIFFDocument.Tag.bodySerial, TIFFDocument.Tag.lensSerial, TIFFDocument.Tag.makerNote]
         doc.exif?.removeAll { dropped.contains($0.tag) }
+        doc.ifd1 = nil                                   // the embedded preview (D-ENG-8)
+        doc.thumbnail = nil
         doc.setOrientation(orientation)
         return doc.serialized()
+    }
+
+    // MARK: Photoshop IRB (APP13)
+
+    static let irbPrefix = Data("Photoshop 3.0\0".utf8)
+    /// Image resources that are preview images: 0x0409 (Photoshop 4 thumbnail) and 0x040C (thumbnail).
+    static let irbThumbnailIDs: Set<UInt16> = [0x0409, 0x040C]
+
+    /// An APP13 payload without its preview-image resources; every other resource (IPTC 0x0404 included) is copied
+    /// byte for byte, in order. Unparseable payloads are kept verbatim; nil when nothing but previews was in it.
+    static func irbRemovingThumbnails(_ payload: Data) -> Data? {
+        let d = Data(payload)
+        guard d.starts(with: irbPrefix) else { return payload }
+        var kept = irbPrefix
+        var removed = false
+        var i = irbPrefix.count
+        while i < d.count {
+            guard i + 7 <= d.count, d[d.startIndex + i ..< d.startIndex + i + 4] == Data("8BIM".utf8) else { return payload }
+            let id = UInt16(d[d.startIndex + i + 4]) << 8 | UInt16(d[d.startIndex + i + 5])
+            let nameLength = Int(d[d.startIndex + i + 6])
+            var j = i + 7 + nameLength
+            if (1 + nameLength) % 2 == 1 { j += 1 }                    // Pascal name padded to an even length
+            guard j + 4 <= d.count else { return payload }
+            let size = d[d.startIndex + j ..< d.startIndex + j + 4].reduce(0) { $0 << 8 | Int($1) }
+            let end = j + 4 + size + (size % 2)
+            guard j + 4 + size <= d.count else { return payload }
+            if irbThumbnailIDs.contains(id) {
+                removed = true
+            } else {
+                kept += d[d.startIndex + i ..< d.startIndex + min(end, d.count)]
+            }
+            i = end
+        }
+        guard removed else { return payload }                    // nothing to remove: the bytes stay verbatim
+        return kept.count > irbPrefix.count ? kept : nil
     }
 
     static func minimalEXIF(from exif: Data?, orientation: Int) -> Data {

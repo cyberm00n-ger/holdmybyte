@@ -188,7 +188,7 @@ import UniformTypeIdentifiers
         #expect(doc.entry(0x0112).flatMap { TIFFDocument.integer($0, big: doc.bigEndian) } == 8)
     }
 
-    @Test func tiffEditorDropsMakerNoteAndKeepsThumbnail() throws {
+    @Test func tiffEditorDropsMakerNoteAndThumbnail() throws {
         // Little-endian TIFF: IFD0 (Model, ExifIFD, GPS) → ExifIFD (MakerNote, BodySerial, ISO) → GPS → IFD1 + thumbnail.
         var doc = TIFFDocument(bigEndian: false, ifd0: [
             TIFFEntry(tag: 0x0110, type: 2, count: 8, value: Data("Camera1\0".utf8)),
@@ -209,12 +209,33 @@ import UniformTypeIdentifiers
         let edited = try TIFFDocument(parsing: try #require(MetadataEditor.exifRemovingLocation(bytes, orientation: 1)))
         #expect(edited.gps == nil)
         #expect(edited.exif?.map(\.tag) == [0x8827])
-        #expect(edited.thumbnail == doc.thumbnail)
+        #expect(edited.thumbnail == nil && edited.ifd1 == nil)                     // D-ENG-8: no embedded preview
+        #expect(try TIFFDocument(parsing: try #require(MetadataEditor.ensureOrientation(bytes, orientation: 1))).thumbnail
+                == doc.thumbnail)                                                  // keepAll keeps it
         #expect(edited.entry(0x0110)?.value == Data("Camera1\0".utf8))
         // ImageIO can read what we write.
         let probe = try #require(CGImageSourceCreateWithData(Self.wrapEXIF(MetadataEditor.exifRemovingLocation(bytes, orientation: 3)!) as CFData, nil))
         let props = CGImageSourceCopyPropertiesAtIndex(probe, 0, nil) as? [CFString: Any]
         #expect(props?[kCGImagePropertyOrientation] as? Int == 3)
+    }
+
+    @Test func removeLocationDropsPhotoshopThumbnailsAndKeepsIPTC() throws {
+        func resource(_ id: UInt16, name: [UInt8] = [], _ body: [UInt8]) -> Data {
+            var r = Data("8BIM".utf8) + Data([UInt8(id >> 8), UInt8(id & 0xFF), UInt8(name.count)] + name)
+            if (1 + name.count) % 2 == 1 { r.append(0) }
+            r += Data([0, 0, UInt8(body.count >> 8), UInt8(body.count & 0xFF)] + body)
+            if body.count % 2 == 1 { r.append(0) }
+            return r
+        }
+        let iptc = resource(0x0404, [0x1C, 0x02, 0x5A, 0x00, 0x06] + Array("Berlin".utf8))
+        let resolution = resource(0x03ED, name: Array("r".utf8), [0, 72, 0, 0, 0, 1, 0, 1, 0, 72, 0, 0, 0, 1, 0, 1])
+        let payload = MetadataEditor.irbPrefix + resolution + resource(0x040C, Array(repeating: 0xAB, count: 301)) + iptc
+            + resource(0x0409, [1, 2, 3])
+        #expect(MetadataEditor.irbRemovingThumbnails(payload) == MetadataEditor.irbPrefix + resolution + iptc)
+        #expect(MetadataEditor.irbRemovingThumbnails(MetadataEditor.irbPrefix + iptc) == MetadataEditor.irbPrefix + iptc)
+        #expect(MetadataEditor.irbRemovingThumbnails(MetadataEditor.irbPrefix + resource(0x040C, [9])) == nil)
+        let garbage = MetadataEditor.irbPrefix + Data("8BIM\u{4}".utf8)
+        #expect(MetadataEditor.irbRemovingThumbnails(garbage) == garbage)                  // unparseable: verbatim
     }
 
     /// A tiny JPEG whose APP1 Exif is `tiff`.

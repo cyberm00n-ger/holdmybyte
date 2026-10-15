@@ -142,8 +142,9 @@ The parameter is mapped to an axis on which the score decreases: JPEG x = ln d, 
 | default slope until a secant exists | −10 score per ln d | +0.5 score per q |
 | max step | 1.0 ln d | 30 q |
 
-Loop: probe; stop at the first passing probe with s − T < 1.0 or after 5 probes; otherwise a secant step on the
-two latest probes (default slope if the secant is not decreasing) aimed at T + 0.5, clamped into the
+Loop: probe; stop at the first passing probe with s − T < stop (WebP `directStop` 1.0, JPEG `directStopJPEG` 0.5,
+D-ENG-8) or after 5 probes; otherwise a secant step on the two latest probes (default slope if the secant is not
+decreasing) aimed at T + stop/2, clamped into the
 passing/failing bracket (midpoint when outside; stop when the bracket is one quantum wide). Values within one
 quantum of a range bound snap to that exact bound.
 
@@ -153,6 +154,9 @@ quantum of a range bound snap to that exact bound.
 - **WebP:** if nothing passes, q = 100 is probed explicitly; if that fails too, the delivery falls back to the JPEG
   search on the same variant (`encoder = "jpegli (fallback)"`, extension `.jpg`). The sharp-YUV preparation is done
   once per (photo, delivery).
+- **Stop window (D-ENG-8, `DirectSearchABTests`, holdout, release-equivalent live primitives, load 10–24):** Social
+  (JPEG 1440 ≥ 85) 1.0 → 0.5: 6.158 → 6.016 MB (−2.3 %), overshoot 0.44 → 0.24, probes 3.58 → 3.95 (0.6, 0.4: 6.039 /
+  6.005 MB). Website (WebP) gains nothing from a tighter window (0.4–0.6: +0.7–1.0 %, more probes): integer q steps.
 
 ### 3.4 Validation (fakes, measured curves and live A/B)
 
@@ -253,8 +257,10 @@ over completion intervals, seeded with the first interval / worker count; nil un
 
 - `keepAll`: EXIF, XMP (+ extended XMP), IPTC verbatim; ICC verbatim or sRGB when converted.
 - `removeLocation`: the EXIF is rebuilt by `TIFFDocument` (IFD0 → Exif → Interop → GPS → IFD1 + thumbnail, values
-  copied raw, pointers relocated) without the GPS IFD, BodySerialNumber, LensSerialNumber, MakerNote and SubIFDs
-  (SubIFDs carry offsets that cannot be relocated). XMP via `CGImageMetadata`: removes `exif:GPS*`,
+  copied raw, pointers relocated) without the GPS IFD, BodySerialNumber, LensSerialNumber, MakerNote, SubIFDs
+  (SubIFDs carry offsets that cannot be relocated) and, since D-ENG-8, without IFD1 and its thumbnail. APP13 keeps
+  every Photoshop image resource byte for byte except the preview images 0x0409/0x040C (IPTC 0x0404 verbatim). On
+  the wedding the two previews were 16.6 KB per file each (Website 8.9 MB, Social 17.7 MB of the G5 totals). XMP via `CGImageMetadata`: removes `exif:GPS*`,
   `aux:SerialNumber`, `aux:LensSerialNumber`, `exifEX:BodySerialNumber` (matched by namespace URI); untouched XMP
   stays byte-identical.
 - `removeAll`: new EXIF with Orientation, Artist, Copyright; XMP with only `dc:rights`, `dc:creator`; no IPTC.
@@ -270,7 +276,9 @@ over completion intervals, seeded with the first interval / worker count; nil un
 ## 6. Archive (§3.6)
 
 Huffman JPEG sources: `transcodeLossless(effort: 7)`, `reconstructJPEG`, SHA-256 compare → `.jxl`, `.done`,
-`byteExact = true`. Anything else, or any transcode/verification failure (logged): the original bytes copied,
+`byteExact = true`. libjxl holds ~1.4 GB for a 45 MP JPEG whatever the effort (cjxl 0.12 e3/e5/e7: 1.39 GB max
+RSS, identical output), 2.4–2.7 CPU-s per transcode + verification at load 6–9. With an optional `MemoryBudget`
+(D-ENG-7) the transcode and its verification reserve 33 B/px. Anything else, or any transcode/verification failure (logged): the original bytes copied,
 `.keptOriginal`, encoder `copy`, `byteExact = true`, source extension.
 
 ## 7. Estimates (§3.10)
@@ -315,6 +323,28 @@ job whose photo set was estimated in this session; time is attributed to deliver
   again once the lock is held, so queued workers do not each spend a GPU score after a pause. References above
   8 MP take one of 3 slots (counting semaphore, cancellable wait). A worker holds at most one full-resolution
   reference, and releases its pixels before the archive transcode.
+- `MemoryBudget` (D-ENG-7, `EngineOptions.memoryBudget`, `HMB_MEMORY_BUDGET` for `hmb`; **off by default**): one
+  weighted, cancellable budget shared by full-resolution references (36 B/px, 1.6 GB at 45 MP) and archive
+  transcodes (33 B/px, 1.5 GB). A worker holds at most one reservation, so it cannot deadlock; a reservation larger
+  than the budget runs alone. Measured (release, 8 workers, `/usr/bin/time -l`):
+
+  | Job | Budget | Wall | Peak RSS | Peak footprint | Load |
+  |---|---|---|---|---|---|
+  | Holdout, Archive only | none | 8.8–8.9 s | 12.29–12.54 GB | 11.38–11.83 GB | 5.0–7.9 |
+  | Holdout, Archive only | 9.6 GB | 10.6 s | 11.38 GB | 10.80 GB | 6.8–7.7 |
+  | Holdout, Archive only | 6.4 GB | 13.6 s | 8.39–8.70 GB | 6.81–7.83 GB | 6.8–7.9 |
+  | 80 wedding photos, all four | none | 91 s | 12.14 GB | 11.86 GB | 4.9–6.9 |
+  | 80 wedding photos, all four | 3.2 GB | 172 s | 9.09 GB | 9.21 GB | 6.4–7.6 |
+  | Wedding 535, all four | none | 475 s | 18.54 GB | 18.01 GB | 7.1–10.7 |
+  | Wedding 535, all four | 6.4 GB | 625 s | 19.49 GB | 13.63 GB | 6.2–8.3 |
+
+  So the budget fixes the Archive-only peak at ×1.5 wall time (a G6 risk), but **does not bring the all-four job
+  under 8 GB** even at two heavy allocations: the lossy workers themselves (45 MP source 180 MB, sRGB copy, candidate
+  decodes, jpegli's float planes; Couple only on the holdout: 5.2 GB RSS, 7.8 GB footprint) and macOS malloc's
+  retained free regions (vmmap mid-run: 1.5 GB "MALLOC_LARGE (empty)" + 2.4 GB "MALLOC_SMALL (empty)" resident,
+  not released by `malloc_zone_pressure_relief`; a per-item autorelease pool changed nothing) account for the rest.
+- Variants no later delivery needs are dropped before each delivery: the full-resolution sRGB copy made for Website
+  and Social no longer lives through the Couple's Package search (180 MB per worker at 45 MP).
 - Determinism: names fixed up front, encoders single-threaded per image (WP1), no randomness or time in outputs;
   1 vs 3 workers produce byte-identical folders (`determinismTwoRunsAreByteIdentical`).
 

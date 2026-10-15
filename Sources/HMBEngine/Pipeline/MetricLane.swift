@@ -17,12 +17,15 @@ final class MetricLane: Sendable {
     private let gpu = NSLock()
     private let slots: DispatchSemaphore
     private let serialize: Bool
+    /// The optional budget shared with archive transcodes (D-ENG-7); full-resolution references reserve from it too.
+    let memory: MemoryBudget?
 
-    init(metric: any PerceptualMetric, maxLiveReferences: Int = 3, serialize: Bool = true) {
+    init(metric: any PerceptualMetric, maxLiveReferences: Int = 3, serialize: Bool = true, memory: MemoryBudget? = nil) {
         self.metric = metric
         self.maxLiveReferences = maxLiveReferences
         self.slots = DispatchSemaphore(value: maxLiveReferences)
         self.serialize = serialize
+        self.memory = memory
     }
 
     /// Runs `body` with the lane held. With a token, the wait polls it; without one (cleanup) it is unconditional.
@@ -49,9 +52,13 @@ final class MetricLane: Sendable {
             while slots.wait(timeout: .now() + Self.pollInterval) == .timedOut { try cancel.check() }
         }
         defer { if needsSlot { slots.signal() } }
-        let reference = try locked(cancel) { try metric.prepareReference(image) }
-        defer { try? locked(nil) { metric.release(reference) } }
-        return try body(reference)
+        func run() throws -> T {
+            let reference = try locked(cancel) { try metric.prepareReference(image) }
+            defer { try? locked(nil) { metric.release(reference) } }
+            return try body(reference)
+        }
+        guard needsSlot, let memory else { return try run() }
+        return try memory.withReservation(Int64(image.pixelCount) * MemoryBudget.referenceBytesPerPixel, cancel: cancel, run)
     }
 
     func score(_ candidate: PixelImage, against reference: any MetricReference, cancel: CancelToken) throws -> Double {

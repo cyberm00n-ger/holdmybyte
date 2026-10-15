@@ -215,3 +215,40 @@ import UniformTypeIdentifiers
         #expect(JPEGContainer.endOfImage(data + Data([1, 2, 3]), scanOffset: parsed.scanOffset) == data.count)
     }
 }
+
+// D-ENG-7: the optional memory budget shared by full-resolution references and archive transcodes.
+@Suite struct MemoryBudgetTests {
+    @Test func capsConcurrentReservationsAndLetsAnOversizeOneRunAlone() throws {
+        let budget = MemoryBudget(capacity: 4)
+        let live = Locked((now: 0, max: 0))
+        DispatchQueue.concurrentPerform(iterations: 12) { i in
+            let bytes: Int64 = i == 5 ? 9 : 1                     // one reservation larger than the whole budget
+            try? budget.withReservation(bytes, cancel: nil) {
+                live.withLock { $0.now += Int(bytes); $0.max = max($0.max, $0.now) }
+                Thread.sleep(forTimeInterval: 0.02)
+                live.withLock { $0.now -= Int(bytes) }
+            }
+        }
+        #expect(live.snapshot.now == 0)
+        #expect(live.snapshot.max <= 9)                           // the oversize one ran alone
+        #expect(budget.peakReserved == 9 || budget.peakReserved <= 4)
+    }
+
+    @Test func aWaitingReservationHonoursCancellation() throws {
+        let budget = MemoryBudget(capacity: 1)
+        let cancel = CancelToken()
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        Thread.detachNewThread {
+            try? budget.withReservation(1, cancel: nil) { entered.signal(); release.wait() }
+        }
+        entered.wait()
+        Thread.detachNewThread {                                 // not GCD: the global queues may be saturated by other suites
+            Thread.sleep(forTimeInterval: 0.1)
+            _ = cancel.request(.stop)
+        }
+        let started = monotonicSeconds()
+        #expect(throws: JobCancelled.self) { try budget.withReservation(1, cancel: cancel) {} }
+        #expect(monotonicSeconds() - started < 2.0)
+        release.signal()
+    }
+}

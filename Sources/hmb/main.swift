@@ -14,11 +14,15 @@ func exitWith(_ error: any Error) -> Never {
 }
 
 /// The live engine with its own support folder, so CLI journals never mix with the app's. `--workers N` arrives as
-/// HMB_WORKERS (exported by `CommandRunner` before this runs; Docs/DECISIONS.md D-ENG-6).
+/// HMB_WORKERS (exported by `CommandRunner` before this runs; Docs/DECISIONS.md D-ENG-6). HMB_MEMORY_BUDGET (bytes)
+/// overrides the engine's memory budget for tuning runs (D-ENG-7); the app never sets it.
 func liveEngine() throws -> LiveEngine {
     let support = FileManager.default.temporaryDirectory.appending(path: "holdmybyte-cli-\(getpid())", directoryHint: .isDirectory)
-    let workers = ProcessInfo.processInfo.environment["HMB_WORKERS"].flatMap(Int.init).map { min(64, max(1, $0)) }
-    return LiveEngine(primitives: try .live(), supportDirectory: support, options: EngineOptions(workerCount: workers))
+    let environment = ProcessInfo.processInfo.environment
+    let workers = environment["HMB_WORKERS"].flatMap(Int.init).map { min(64, max(1, $0)) }
+    var options = EngineOptions(workerCount: workers)
+    if let budget = environment["HMB_MEMORY_BUDGET"].flatMap(Int64.init), budget > 0 { options.memoryBudget = budget }
+    return LiveEngine(primitives: try .live(), supportDirectory: support, options: options)
 }
 
 func printJSON<T: Encodable>(_ value: T) throws {

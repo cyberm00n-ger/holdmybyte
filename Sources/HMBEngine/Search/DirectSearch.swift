@@ -30,16 +30,17 @@ enum DirectSearch {
     }
 
     /// The core loop. `probe` receives the parameter (d or q).
-    static func run(target t: Double, axis: Axis, constants c: SearchConstants,
+    static func run(target t: Double, axis: Axis, constants c: SearchConstants, stop: Double? = nil,
                     probe: (Double) throws -> ProbeRecord) throws -> [ProbeRecord] {
         var xs: [Double] = []
         var probes: [ProbeRecord] = []
         var x = axis.clamp(axis.start)
-        let aim = t + c.directStop / 2
+        let stop = stop ?? c.directStop
+        let aim = t + stop / 2
         while probes.count < c.directMaxProbes {
             let record = try probe(axis.toParameter(x))
             xs.append(x); probes.append(record)
-            if record.passes(t) && record.score - t < c.directStop { break }
+            if record.passes(t) && record.score - t < stop { break }
             // Secant through the two most recent probes, if it is usable; otherwise the default slope.
             var slope = axis.slope
             if xs.count >= 2 {
@@ -67,7 +68,8 @@ enum DirectSearch {
     static func jpeg(target t: Double, constants c: SearchConstants, keepOriginalAllowed: Bool = false,
                      sourceBytes: Int = 0,
                      probe: (Double, ChromaSubsampling) throws -> ProbeRecord) throws -> SearchResult {
-        var probes = try run(target: t, axis: .jpeg(prior: Targets.jpegPrior(t), constants: c), constants: c) {
+        var probes = try run(target: t, axis: .jpeg(prior: Targets.jpegPrior(t), constants: c), constants: c,
+                             stop: c.directStopJPEG) {
             try probe($0, .s420)
         }
         if bestPassing(probes, target: t) == nil, !probes.contains(where: { abs($0.parameter - c.dMin) < 1e-6 }) {
@@ -76,7 +78,7 @@ enum DirectSearch {
         if bestPassing(probes, target: t) == nil {
             var axis = Axis.jpeg(prior: c.dMin, constants: c)
             axis.start = log(c.dMin)
-            probes += try run(target: t, axis: axis, constants: c) { try probe($0, .s444) }
+            probes += try run(target: t, axis: axis, constants: c, stop: c.directStopJPEG) { try probe($0, .s444) }
         }
         let best = bestPassing(probes, target: t)
         if keepOriginalAllowed, best.map({ Double($0.bytes) >= 0.95 * Double(sourceBytes) }) ?? true {

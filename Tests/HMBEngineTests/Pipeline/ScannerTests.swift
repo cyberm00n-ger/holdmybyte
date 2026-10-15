@@ -111,6 +111,6 @@ func loadAverage() -> Double {
         let rate = Double(result.photos.count) / seconds
         print("scanner: \(result.photos.count) files in \(String(format: "%.3f", seconds)) s = \(Int(rate)) files/s (load \(String(format: "%.1f", load)))")
         #expect(result.photos.count == 2000)
-        if load < 10 { #expect(rate >= 500) }
+        if load < 3 { #expect(rate >= 500) }          // §3.11: budgets hold on a quiet machine (1-minute load < 3)
     }
 }

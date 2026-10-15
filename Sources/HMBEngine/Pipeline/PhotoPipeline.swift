@@ -103,6 +103,15 @@ struct PhotoPipeline {
         for (position, plan) in plans.enumerated() {
             try c.cancel.check()
             let preset = plan.preset
+            // Variants no later delivery uses go now: after Website and Social, the full-resolution sRGB copy (180 MB
+            // at 45 MP per worker) would otherwise live through the whole Couple's Package search (D-ENG-7).
+            let later = plans[position...].map(\.preset).filter(\.isLossy)
+            variants = variants.filter { key, _ in
+                later.contains { p in
+                    (key == "srgb" && p.colour == .convertToSRGB)
+                        || p.size.longEdge.map { key == "\(p.colour.rawValue)@\($0)" } == true
+                }
+            }
             let result: PhotoResult
             if !preset.isLossy {
                 // The archive needs only the file bytes: once no lossy delivery is left, the pixels go (§3.9 memory).
@@ -111,7 +120,8 @@ struct PhotoPipeline {
                     variants.removeAll()
                 }
                 let product = try JXLArchive.make(info, sourceExtension: photo.url.pathExtension, jxl: c.primitives.jxl,
-                                                  cancel: c.cancel, label: photo.relativePath)
+                                                  cancel: c.cancel, label: photo.relativePath,
+                                                  pixels: photo.pixelWidth * photo.pixelHeight, memory: c.lane.memory)
                 result = try write(product.data, ext: product.ext, photo: photo, plan: plan) { url, bytes in
                     PhotoResult(photo: photo.id, delivery: preset.id, status: product.transcoded ? .done : .keptOriginal,
                                 inBytes: photo.byteCount, outBytes: bytes, outRelativePath: url,

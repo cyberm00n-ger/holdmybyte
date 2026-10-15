@@ -27,7 +27,7 @@ public final class LiveEngine: EngineService {
         self.supportDirectory = supportDirectory
         self.options = options
         self.lane = MetricLane(metric: primitives.metric, maxLiveReferences: options.maxLiveReferences,
-                               serialize: options.serializeMetric)
+                               serialize: options.serializeMetric, memory: options.memoryBudget.map(MemoryBudget.init(capacity:)))
     }
 
     /// The production engine: live primitives (WP1).
