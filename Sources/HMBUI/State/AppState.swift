@@ -5,7 +5,11 @@ import HMBModel
 
 public enum SidebarSelection: Hashable, Sendable { case newWedding, wedding(WeddingID) }
 public enum DragSummary: Equatable, Sendable { case folder(name: String), photos(count: Int), items(count: Int) }
-public enum DropError: Equatable, Sendable { case onlyRaw(folderName: String, count: Int), noPhotos }
+public enum DropError: Equatable, Sendable {
+    case onlyRaw(folderName: String, count: Int), noPhotos
+    /// The live engine did not start (`UnavailableEngine`); added after WP0 (Docs/DECISIONS.md, app polish).
+    case engineUnavailable(reason: String)
+}
 public enum DropZoneState: Equatable, Sendable { case idle, targeted(DragSummary), error(DropError) }
 public enum EstimateState: Equatable, Sendable { case estimating, ready(DeliveryEstimate), unavailable }
 public enum ScanState: Equatable, Sendable { case scanning(found: Int), ready(ScanResult) }

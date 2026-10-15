@@ -80,6 +80,21 @@ import Testing
         #expect(h.model.state.dropZone == .error(.noPhotos))
     }
 
+    /// When the live engine could not start, a drop says so (and keeps saying so), instead of "No photos found".
+    @Test func dropWithoutAnEngineShowsTheEngineError() async throws {
+        let model = AppModel(state: AppState(), engine: UnavailableEngine(reason: "No Metal device"), history: InMemoryHistory([]),
+                             presetsStore: InMemoryPresets(), settingsStore: InMemorySettings(),
+                             thumbnails: FixtureThumbnails(photoFolder: nil))
+        let log = PlatformLog()
+        model.platform = log.platform()
+        model.handleDrop([TestData.folder])
+        try await waitUntil("error") { model.state.dropZone != .idle }
+        #expect(model.state.dropZone == .error(.engineUnavailable(reason: "No Metal device")))
+        #expect(model.state.draft == nil)
+        #expect(Copy.DropError.engineTitle == "holdmybyte can’t compress right now")
+        #expect(Copy.DropError.engineDetail("No Metal device") == "Details: No Metal device")
+    }
+
     @Test func dropOnSetupAddsToThisWedding() async throws {
         let h = Harness()
         h.model.handleDrop([TestData.folder])

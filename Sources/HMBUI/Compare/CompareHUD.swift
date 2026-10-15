@@ -57,6 +57,7 @@ struct CompareHUD: View {
                 }
             }
             .menuStyle(.borderlessButton)
+            .hmbMenuLabelTint()
             .fixedSize()
             .help("Order of the photos")
         }
@@ -69,6 +70,7 @@ struct CompareHUD: View {
 /// The score: a capsule in the accent; orange (with a warning symbol) only if below the target, which must never happen.
 struct ScorePill: View {
     let result: PhotoResult?
+    @Environment(\.locale) private var locale
 
     var body: some View {
         if result?.status == .keptOriginal {
@@ -81,13 +83,14 @@ struct ScorePill: View {
             let below = (result?.target).map { score < $0 } ?? false
             HStack(spacing: 3) {
                 if below { Image(systemName: "exclamationmark.triangle.fill") }
-                Text(HMBFormat.score(score)).monospacedDigit()
+                Text(HMBFormat.score(score, locale: locale)).monospacedDigit()
             }
             .font(.callout.weight(.semibold))
             .foregroundStyle(below ? AnyShapeStyle(Tokens.Palette.warning) : AnyShapeStyle(.tint))
             .padding(.horizontal, Tokens.Spacing.s8).padding(.vertical, 2)
             .background(below ? AnyShapeStyle(Tokens.Palette.warning.opacity(0.15)) : AnyShapeStyle(.tint.opacity(0.15)), in: Capsule())
-            .accessibilityLabel(below ? "Score \(HMBFormat.score(score)), below target" : "Score \(HMBFormat.score(score))")
+            .accessibilityLabel(below ? "Score \(HMBFormat.score(score, locale: locale)), below target"
+                                        : "Score \(HMBFormat.score(score, locale: locale))")
         }
     }
 }
@@ -110,12 +113,12 @@ struct CompareCapsule: View {
     }
 }
 
-/// The split divider: a 1.5 pt white line with a 0.5 pt dark shadow, and a 30 pt glass knob.
+/// The split divider: a 1.5 pt white line with a 0.5 pt dark shadow, and a 30 pt glass knob. The line spans only the
+/// visible photo (`line`, view coordinates); the knob sits at its vertical centre.
 struct CompareDivider: View {
     @Bindable var model: AppModel
-    let x: CGFloat
-    let width: CGFloat
-    let height: CGFloat
+    let line: CGRect
+    let span: CGRect
     let divider: Double
 
     var body: some View {
@@ -132,7 +135,9 @@ struct CompareDivider: View {
                 .hmbGlass(.regular.interactive(), in: Circle())
                 .contentShape(Circle())
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named(CompareView.coordinateSpace))
-                    .onChanged { value in model.updateCompare { $0.divider = Double(value.location.x / max(1, width)) } })
+                    .onChanged { value in
+                        model.updateCompare { $0.divider = Double((value.location.x - span.minX) / max(1, span.width)) }
+                    })
                 .accessibilityElement()
                 .accessibilityLabel("Divider")
                 .accessibilityValue("Divider at \(Int((divider * 100).rounded())) percent")
@@ -147,7 +152,7 @@ struct CompareDivider: View {
                 }
                 .accessibilityAction(named: "Show Original") { model.toggleCompareOriginalLatch() }
         }
-        .frame(width: 30, height: height)
-        .position(x: x, y: height / 2)
+        .frame(width: 30, height: line.height)
+        .position(x: line.minX, y: line.midY)
     }
 }

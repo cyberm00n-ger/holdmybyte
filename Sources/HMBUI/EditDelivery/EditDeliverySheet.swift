@@ -1,4 +1,4 @@
-// Edit Delivery (Docs/SPEC.md §2.4 S6): 500 × 560, Form(.grouped). Cancel (Esc) · Save (Return, glass prominent);
+// Edit Delivery (Docs/SPEC.md §2.4 S6): 500 × 600 (560 + the title), Form(.grouped). Cancel (Esc) · Save (Return, glass prominent);
 // built-ins also get Restore Default, bottom-left. Save is disabled with the validation message shown while the
 // combination is invalid.
 import HMBModel
@@ -12,7 +12,9 @@ public struct EditDeliverySheet: View {
     @FocusState private var nameFocused: Bool
     @Environment(\.isSnapshotRendering) private var isSnapshotRendering
 
-    public static let size = CGSize(width: 500, height: 560)
+    /// §2.4 S6 gives 500 × 560 for the form; the sheet title (top leading, as macOS sheets have it) adds 40 pt, so every
+    /// field still shows without scrolling.
+    public static let size = CGSize(width: 500, height: 600)
 
     /// `onFinish` runs after Save (the preset is saved through `model.savePreset`) and after Cancel.
     public init(model: AppModel, preset: DeliveryPreset, isNew: Bool, onFinish: @escaping () -> Void) {
@@ -24,6 +26,13 @@ public struct EditDeliverySheet: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            // The sheet's title, where a macOS sheet has it (top leading), not an empty band above the form.
+            Text(isNew ? EditDeliveryCopy.newTitle : EditDeliveryCopy.editTitle)
+                .font(Tokens.Typography.sheetTitle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Tokens.Spacing.s20)
+                .padding(.top, Tokens.Spacing.s20)
+                .accessibilityAddTraits(.isHeader)
             Form {
                 Section {
                     TextField("Name", text: $form.name, prompt: Text("Couple’s Package"))
@@ -34,6 +43,8 @@ public struct EditDeliverySheet: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    // A value, not an accent element (§2.5): the symbol draws in the label colour like the text values.
+                    .tint(.primary)
                 }
                 Section {
                     Picker("Format", selection: $form.format) {
@@ -94,6 +105,7 @@ public struct EditDeliverySheet: View {
                 }
             }
             .formStyle(.grouped)
+            .contentMargins(.top, Tokens.Spacing.s4, for: .scrollContent)
             .scrollEdgeEffectStyle(isSnapshotRendering ? .hard : .soft, for: .bottom)
 
             bottomBar

@@ -93,7 +93,7 @@ public enum WP3StateCatalogue {
             setup(.ready(scan))
         case "setup-blocked-disk":
             setup(.ready(Fixtures.scanResult),
-                  preflight: [.notEnoughSpace(volume: "Macintosh HD", needed: 1_900_000_000, available: 800_000_000)])
+                  preflight: [.notEnoughSpace(volume: "Macintosh HD", needed: Fixtures.defaultDeliveriesBytes, available: 800_000_000)])
         case "setup-create-more":
             let record = Fixtures.only([.couple, .website], of: Fixtures.finnUndLissy)
             done(record)

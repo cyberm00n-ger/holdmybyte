@@ -99,6 +99,11 @@ public enum Copy {
         }
         public static let noPhotos = "The dropped items don’t contain JPEG, HEIC, PNG or TIFF photos."
         public static let chooseOther = "Choose Other Photos…"
+        /// The live engine did not start (UnavailableEngine): not the photos' fault, so not "No photos found".
+        public static let engineTitle = "holdmybyte can’t compress right now"
+        public static let engineMessage = "Its compression engine didn’t start on this Mac. Nothing was read or changed. "
+            + "Quit and reopen holdmybyte; if this keeps happening, reinstall it."
+        public static func engineDetail(_ reason: String) -> String { "Details: \(reason)" }
         /// Seconds until the zone returns to `empty`.
         public static let resetAfter: Double = 6
     }
@@ -376,8 +381,8 @@ public enum Copy {
                 : "\(count.formatted(.number.locale(locale))) photos kept as original. They were already as small as this quality allows."
         }
         /// "Every photo ≥ 85 · lowest 85.0" | "Every photo met its target · lowest 74.0"
-        public static func proofLine(quality: QualityLevel, lowest: Double?) -> String {
-            let lowestText = lowest.map { " · lowest " + HMBFormat.score($0) } ?? ""
+        public static func proofLine(quality: QualityLevel, lowest: Double?, locale: Locale = .current) -> String {
+            let lowestText = lowest.map { " · lowest " + HMBFormat.score($0, locale: locale) } ?? ""
             if let floor = quality.floor { return "Every photo ≥ \(Int(floor))" + lowestText }
             return "Every photo met its target" + lowestText
         }
@@ -391,9 +396,9 @@ public enum Copy {
         public static func proofTitle(met: Int, total: Int, locale: Locale = .current) -> String {
             "\(met.formatted(.number.locale(locale))) of \(Copy.photos(total, locale: locale)) met their quality target"
         }
-        public static func proofDetail(lowest: Double, median: Double, highest: Double) -> String {
-            "Each delivered photo was compared with its original. Lowest \(HMBFormat.score(lowest)) · "
-                + "median \(HMBFormat.score(median)) · highest \(HMBFormat.score(highest))."
+        public static func proofDetail(lowest: Double, median: Double, highest: Double, locale: Locale = .current) -> String {
+            "Each delivered photo was compared with its original. Lowest \(HMBFormat.score(lowest, locale: locale)) · "
+                + "median \(HMBFormat.score(median, locale: locale)) · highest \(HMBFormat.score(highest, locale: locale))."
         }
         public static let spotCheck = "Spot-Check the Hardest Photos"
         public static let lowestFive = "Lowest five"
@@ -405,8 +410,10 @@ public enum Copy {
             + "an open perceptual metric. Higher is closer to the original; 100 means identical."
         public static let explainerTitle = "How Quality Is Measured"
         /// VoiceOver chart summary: "535 photos, lowest 85.0, median 85.5, all at or above 85"
-        public static func histogramSummary(photos: Int, lowest: Double, median: Double, floor: Double?) -> String {
-            var text = "\(photos) photos, lowest \(HMBFormat.score(lowest)), median \(HMBFormat.score(median))"
+        public static func histogramSummary(photos: Int, lowest: Double, median: Double, floor: Double?,
+                                            locale: Locale = .current) -> String {
+            var text = "\(photos.formatted(.number.locale(locale))) photos, lowest \(HMBFormat.score(lowest, locale: locale)), "
+                + "median \(HMBFormat.score(median, locale: locale))"
             if let floor { text += ", all at or above \(Int(floor))" } else { text += ", all met their targets" }
             return text
         }
@@ -426,14 +433,15 @@ public enum Copy {
         }
         /// Hover caption: "−88 % · 85.4"
         public static func cellCaption(fraction: Double?, score: Double?, locale: Locale = .current) -> String {
-            [fraction.map { HMBFormat.savedPercent($0, locale: locale) }, score.map(HMBFormat.score)]
+            [fraction.map { HMBFormat.savedPercent($0, locale: locale) }, score.map { HMBFormat.score($0, locale: locale) }]
                 .compactMap { $0 }.joined(separator: " · ")
         }
         /// VoiceOver: "DSC09412, done, 88 percent smaller, score 85.4"
-        public static func cellAccessibility(fileName: String, status: String, fraction: Double?, score: Double?) -> String {
+        public static func cellAccessibility(fileName: String, status: String, fraction: Double?, score: Double?,
+                                             locale: Locale = .current) -> String {
             var parts = [fileName, status]
             if let fraction { parts.append("\(Int((fraction * 100).rounded())) percent smaller") }
-            if let score { parts.append("score \(HMBFormat.score(score))") }
+            if let score { parts.append("score \(HMBFormat.score(score, locale: locale))") }
             return parts.joined(separator: ", ")
         }
     }

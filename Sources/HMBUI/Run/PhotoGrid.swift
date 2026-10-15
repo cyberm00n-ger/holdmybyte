@@ -92,7 +92,7 @@ struct PhotoCell: View, Equatable {
             .help(cell.photo.relativePath)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Copy.Done.cellAccessibility(fileName: fileStem, status: statusWord,
-                                                            fraction: cell.savedFraction, score: cell.score))
+                                                            fraction: cell.savedFraction, score: cell.score, locale: locale))
             .accessibilityAddTraits(isSelected ? [.isSelected, .isImage] : .isImage)
     }
 

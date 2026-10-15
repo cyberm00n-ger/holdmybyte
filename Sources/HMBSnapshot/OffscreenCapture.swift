@@ -7,7 +7,8 @@
 //     replaced by a `GlassStandIn` that paints a flat, appearance-aware fill; its content view is moved into the
 //     stand-in and pinned with constraints.
 //  2. Backdrop layers and scroll-edge pockets (`CABackdropLayer`, `NSScrollPocket`) blur what lies behind them and
-//     come out as solid blocks; they are hidden.
+//     come out as solid blocks. Backdrops are hidden; a pocket becomes a `PocketStandIn`, a fade from the bar's
+//     background into the content, so rows scrolled under the toolbar do not show through the title bar.
 //  3. Vibrant text and symbols are `CATintedImage` layer contents (an A8 mask tinted by `contentsMultiplyColor`,
 //     composited with plus-lighter/plus-darker). Neither `cacheDisplay` nor `CALayer.render(in:)` draws them, so
 //     they are flattened into ordinary images with a colour that approximates the vibrant result.
@@ -142,7 +143,18 @@ enum OffscreenCapture {
     }
 
     static func replaceGlass(in view: NSView, appearance: NSAppearance) {
-        if view.className == "NSScrollPocket" { view.isHidden = true; return }
+        if view.className == "NSScrollPocket" {
+            if let parent = view.superview, view.frame.height > 0 {
+                let inGlass = sequence(first: parent, next: \.superview).contains { $0 is GlassStandIn }
+                let rect = view.convert(view.bounds, to: nil)
+                let windowHeight = view.window?.contentView?.bounds.height ?? rect.maxY
+                let standIn = PocketStandIn(frame: view.frame, barAtTop: rect.midY > windowHeight / 2, inGlass: inGlass)
+                standIn.autoresizingMask = view.autoresizingMask
+                parent.addSubview(standIn, positioned: .above, relativeTo: view)
+            }
+            view.isHidden = true
+            return
+        }
         if let layer = view.layer, NSStringFromClass(type(of: layer)).contains("Backdrop") { view.isHidden = true; return }
         if let glass = view as? NSGlassEffectView, let parent = glass.superview {
             let standIn = GlassStandIn(frame: glass.frame, cornerRadius: glass.cornerRadius)
@@ -244,7 +256,33 @@ enum OffscreenCapture {
 
 /// Flat stand-in for a glass surface: a rounded rectangle in a fill a little off the window background, with a
 /// hairline, resolved for the view's appearance at draw time.
+/// A scroll-edge pocket's stand-in: the bar's background (the glass stand-in's fill inside the sidebar, the window
+/// background elsewhere), opaque at the bar and fading out over the pocket, like the soft scroll-edge effect.
+final class PocketStandIn: NSView {
+    let barAtTop: Bool
+    let inGlass: Bool
+
+    init(frame: CGRect, barAtTop: Bool, inGlass: Bool) {
+        self.barAtTop = barAtTop
+        self.inGlass = inGlass
+        super.init(frame: frame)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let base = inGlass ? GlassStandIn.fillColor : NSColor.windowBackgroundColor
+        guard let gradient = NSGradient(colorsAndLocations: (base, 0), (base, 0.7), (base.withAlphaComponent(0), 1)) else { return }
+        gradient.draw(in: bounds, angle: barAtTop ? 90 : -90)        // flipped: 90° runs from the top edge down
+    }
+}
+
 final class GlassStandIn: NSView {
+    static var fillColor: NSColor { NSColor.windowBackgroundColor.blended(withFraction: 0.07, of: .labelColor) ?? .windowBackgroundColor }
+
     let cornerRadius: CGFloat
 
     init(frame: CGRect, cornerRadius: CGFloat) {
@@ -258,7 +296,7 @@ final class GlassStandIn: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
-        (NSColor.windowBackgroundColor.blended(withFraction: 0.07, of: .labelColor) ?? .windowBackgroundColor).setFill()
+        Self.fillColor.setFill()
         path.fill()
         let edge = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: cornerRadius, yRadius: cornerRadius)
         edge.lineWidth = 1

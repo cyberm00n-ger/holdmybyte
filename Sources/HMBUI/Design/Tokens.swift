@@ -8,7 +8,11 @@ public enum Tokens {
 
     public enum Palette {
         /// `.tint` at the root only when the system accent is Multicolor (see `View.hmbAccent()`). #0B7F7B / #3CC8BF.
-        public static let accentMulticolor = adaptive(light: 0x0B7F7B, dark: 0x3CC8BF, name: "accentMulticolor")
+        public static let accentMulticolor = adaptive(light: accentMulticolorHex.light, dark: accentMulticolorHex.dark,
+                                                      name: "accentMulticolor")
+        /// The accent's sRGB values; also compiled into the bundle's `AccentColor` asset (Scripts/make-icon.sh), which
+        /// AppKit-drawn UI (alert default buttons, open panels, menus) uses when the system accent is Multicolor.
+        public static let accentMulticolorHex: (light: UInt32, dark: UInt32) = (0x0B7F7B, 0x3CC8BF)
         /// Compare background, the photographer's neutral surround. #F2F2F2 / #1C1C1E.
         public static let compareSurround = adaptive(light: 0xF2F2F2, dark: 0x1C1C1E, name: "compareSurround")
         /// Warnings and the issues edge.
@@ -20,6 +24,10 @@ public enum Tokens {
         /// Compare split divider (§2.4 S14): a white line with a dark 0.5 pt shadow, over any photo, in both appearances.
         public static let compareDivider = Color.white
         public static let compareDividerShadow = Color.black.opacity(0.6)
+        /// Snapshot stand-in for Liquid Glass (`hmbGlass` under `isSnapshotRendering`): the window background, nearly
+        /// opaque, as glass reads over a busy photo; plus a soft shadow.
+        public static let snapshotGlass = Color(nsColor: .windowBackgroundColor).opacity(0.9)
+        public static let snapshotGlassShadow = Color.black.opacity(0.12)
 
         static func adaptive(light: UInt32, dark: UInt32, name: String) -> Color {
             Color(nsColor: NSColor(name: NSColor.Name("hmb." + name)) { appearance in
@@ -97,6 +105,8 @@ public enum Tokens {
         public static let doneTitle = Font.system(size: 26, weight: .semibold)
         /// Setup name and run title: 22 pt semibold.
         public static let title = Font.system(size: 22, weight: .semibold)
+        /// Sheet titles (Edit Delivery, Rename): the system's sheet-title weight.
+        public static let sheetTitle = Font.title3.weight(.semibold)
         /// Section and tile titles.
         public static let sectionTitle = Font.headline
         public static let body = Font.body

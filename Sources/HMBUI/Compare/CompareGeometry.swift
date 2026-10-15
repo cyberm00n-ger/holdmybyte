@@ -53,6 +53,15 @@ struct CompareGeometry: Equatable {
                       width: size.width, height: size.height)
     }
 
+    /// The part of the image that is on screen below the toolbar, in pane coordinates: at Fit the photo itself
+    /// (the letterbox excluded), at 100 % the pane below the toolbar. The split divider spans exactly this rect.
+    func visiblePhotoRect(in pane: CGSize, zoom: CompareZoom, center: CGPoint) -> CGRect {
+        let frame = imageFrame(in: pane, zoom: zoom, center: center)
+        let area = CGRect(x: 0, y: topInset, width: pane.width, height: max(0, pane.height - topInset))
+        let visible = frame.intersection(area)
+        return visible.isNull ? .zero : visible
+    }
+
     /// The unit centre adjusted so that, at 100 %, the image covers the pane (0.5 where it is smaller than the pane).
     func clampedCenter(_ center: CGPoint, in pane: CGSize) -> CGPoint {
         let s = actualScale

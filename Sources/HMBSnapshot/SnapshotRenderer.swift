@@ -111,7 +111,9 @@ final class SnapshotRenderer {
         let toolbarHeight = max(0, window.frame.height - window.contentLayoutRect.maxY)
         for sheet in NSApp.windows where !before.contains(ObjectIdentifier(sheet)) && sheet !== window {
             sheet.appearance = appearance
-            let view = OffscreenCapture.frameView(of: sheet)
+            // The content view only: unattached, the sheet is a titled window whose 32 pt title bar a presented
+            // sheet does not have (it showed as an empty band above the sheet's own title).
+            let view = sheet.contentView ?? OffscreenCapture.frameView(of: sheet)
             guard view.bounds.width > 40, view.bounds.height > 40,
                   let image = OffscreenCapture.capture(view, appearance: appearance)?.cgImage else { continue }
             let rect = CGRect(x: (size.width - view.bounds.width) / 2, y: toolbarHeight + 8,
@@ -161,6 +163,11 @@ final class SnapshotRenderer {
         for (index, button) in added {
             button.keyEquivalent = index == copy.defaultButton ? "\r" : (copy.buttons.count == 2 ? "\u{1b}" : "")
             button.hasDestructiveAction = index == copy.destructiveButton
+            // The app bundle's AccentColor asset (Scripts/make-icon.sh) makes AppKit draw the default button in the
+            // accent; the harness is no bundle, so it sets the same colour on the button.
+            if index == copy.defaultButton, Tokens.usesMulticolorAccent {
+                button.bezelColor = NSColor(Tokens.Palette.accentMulticolor)
+            }
         }
         alert.layout()
         defer { alert.window.close() }

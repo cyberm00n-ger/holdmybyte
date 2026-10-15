@@ -5,12 +5,13 @@ import SwiftUI
 
 extension EnvironmentValues {
     /// True while the snapshot harness renders offscreen (`hmb-snapshot`), which cannot render Liquid Glass.
-    /// Glass then falls back to `.regularMaterial`.
+    /// Glass then falls back to a flat stand-in (`Tokens.Palette.snapshotGlass` with a hairline).
     @Entry public var isSnapshotRendering: Bool = false
 }
 
 extension View {
-    /// Liquid Glass in `shape`, or `.regularMaterial` in `shape` when `\.isSnapshotRendering` is true.
+    /// Liquid Glass in `shape`, or a flat stand-in in `shape` when `\.isSnapshotRendering` is true (offscreen,
+    /// materials draw without their blur, so a material capsule over a photo vanished and its text sat on the photo).
     public func hmbGlass(_ glass: Glass = .regular, in shape: some Shape = Capsule()) -> some View {
         modifier(HMBGlassModifier(glass: glass, shape: shape))
     }
@@ -29,7 +30,10 @@ struct HMBGlassModifier<S: Shape>: ViewModifier {
 
     func body(content: Content) -> some View {
         if isSnapshotRendering {
-            content.background(.regularMaterial, in: shape)
+            content
+                .background(Tokens.Palette.snapshotGlass, in: shape)
+                .overlay { shape.stroke(.separator, lineWidth: 0.5) }
+                .shadow(color: Tokens.Palette.snapshotGlassShadow, radius: 6, y: 2)
         } else {
             content.glassEffect(glass, in: shape)
         }
@@ -55,4 +59,8 @@ extension View {
     /// label colour. The app's root `.tint` (Multicolor accent, §2.5) would otherwise colour its label and bezel teal,
     /// which macOS never does for a secondary button and §2.5's accent list does not allow.
     public func hmbNeutralButtonTint() -> some View { tint(nil) }
+
+    /// A toolbar or HUD menu (Delivery, Zoom, More, the Compare order menu): its symbol and title draw in the label
+    /// colour like the toolbar's buttons. Menus pick up the root `.tint`, which §2.5 reserves for the listed elements.
+    public func hmbMenuLabelTint() -> some View { tint(.primary) }
 }

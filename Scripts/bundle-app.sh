@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Builds build/holdmybyte.app (Docs/SPEC.md §4.2): release build, bundle layout, Info.plist, icon, ad hoc signature,
-# audits. Usage: Scripts/bundle-app.sh [--smoke]
+# Builds build/holdmybyte.app (Docs/SPEC.md §4.2): release build, bundle layout, Info.plist, asset catalog (app icon
+# and AccentColor, compiled by actool through Scripts/make-icon.sh), ad hoc signature, audits. Usage: Scripts/bundle-app.sh [--smoke]
 #   --smoke   also launch the app binary for a few seconds and run the bundled `hmb --version`.
 #
 #   Contents/MacOS/holdmybyte
 #   Contents/Helpers/hmb              (Helpers, never MacOS/: on a case-insensitive volume "hmb" and "HMB" collide)
-#   Contents/Resources/AppIcon.icns
+#   Contents/Resources/Assets.car     (Liquid Glass app icon + AccentColor; Info.plist: CFBundleIconName, NSAccentColorName)
+#   Contents/Resources/AppIcon.icns   (fallback icon, CFBundleIconFile)
 #   Contents/Info.plist
 set -euo pipefail
 
@@ -36,7 +37,13 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$BIN/holdmybyte" "$APP/Contents/MacOS/holdmybyte"
 cp "$BIN/hmb" "$APP/Contents/Helpers/hmb"
-"$ROOT/Scripts/make-icon.sh" "$APP/Contents/Resources/AppIcon.icns" "$BIN/hmb-snapshot"
+ASSETS="$ROOT/build/assets"           # Assets.car, AppIcon.icns, asset-info.plist, review/ (icon sources and renders)
+rm -rf "$ASSETS"
+"$ROOT/Scripts/make-icon.sh" "$ASSETS" "$BIN/hmb-snapshot"
+cp "$ASSETS/Assets.car" "$ASSETS/AppIcon.icns" "$APP/Contents/Resources/"
+for key in CFBundleIconName NSAccentColorName; do
+    /usr/libexec/PlistBuddy -c "Print :$key" "$ASSETS/asset-info.plist" >/dev/null 2>&1 || die "actool did not report $key"
+done
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -51,6 +58,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleIconName</key><string>AppIcon</string>
+    <key>NSAccentColorName</key><string>AccentColor</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>LSMinimumSystemVersion</key><string>26.0</string>
@@ -79,6 +88,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 plutil -lint "$APP/Contents/Info.plist" >/dev/null || die "Info.plist does not lint"
+# The catalog must carry what Info.plist names: the AccentColor (AppKit's accent for alerts, panels and menus when the
+# system accent is Multicolor) and the AppIcon.
+catalog="$(xcrun assetutil --info "$APP/Contents/Resources/Assets.car")"
+grep -q '"Name" : "AccentColor"' <<< "$catalog" || die "Assets.car has no AccentColor"
+grep -q '"Name" : "AppIcon"' <<< "$catalog" || die "Assets.car has no AppIcon"
 
 # Ad hoc signature, inside out (no --deep when signing).
 codesign --force --sign - --identifier "$BUNDLE_ID.hmb" "$APP/Contents/Helpers/hmb"

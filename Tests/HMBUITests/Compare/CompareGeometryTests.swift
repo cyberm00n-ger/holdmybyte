@@ -76,8 +76,9 @@ import Testing
                                             showsOriginal: false, showsDifferences: false, originalAvailable: true,
                                             hasOriginalImage: true, hasDifferencesImage: false)
         let normal = CompareCanvasPlan(input)
-        #expect(normal.dividerX == 336)
-        #expect(normal.placements[.delivered]?.clip.minX == 336)
+        // 30 % across the photo (1092 wide, from x 14), not across the view.
+        #expect(normal.dividerX == 342)
+        #expect(normal.placements[.delivered]?.clip.minX == 342)
         #expect(normal.placements[.original]?.visible == true)
         var heldInput = input
         heldInput.showsOriginal = true
@@ -88,6 +89,29 @@ import Testing
         }
         #expect(held.placements[.delivered]?.visible == false)
         #expect(held.placements[.delivered]?.frame == normal.placements[.delivered]?.frame)
+    }
+
+    /// The divider spans only the visible photo: never the letterbox, the area under the toolbar or the HUD's band
+    /// below a Fit photo; at 100 % it runs from the toolbar's edge to the bottom.
+    @Test func dividerIsConfinedToThePhoto() throws {
+        var g = Self.geometry
+        g.imageSize = CGSize(width: 4000, height: 6000)                 // portrait: letterboxed left and right
+        let fit = CompareCanvasPlan(.init(geometry: g, zoom: .fit, center: CGPoint(x: 0.5, y: 0.5), divider: 0,
+                                          showsOriginal: false, showsDifferences: false, originalAvailable: true,
+                                          hasOriginalImage: true, hasDifferencesImage: false))
+        let photo = g.imageFrame(in: g.viewSize, zoom: .fit, center: CGPoint(x: 0.5, y: 0.5))
+        let line = try #require(fit.dividerLine)
+        #expect(line.minY == photo.minY && line.maxY == photo.maxY && line.minY >= 52)
+        #expect(line.minX == photo.minX.rounded())                       // 0 % is the photo's left edge
+        #expect(abs(try #require(fit.dividerFraction(atX: photo.midX)) - 0.5) < 1e-9)
+        #expect(fit.dividerFraction(atX: 0) == 0 && fit.dividerFraction(atX: g.viewSize.width) == 1)
+        #expect(fit.isOnDivider(CGPoint(x: line.minX + 3, y: photo.midY)))
+        #expect(!fit.isOnDivider(CGPoint(x: line.minX, y: 20)))           // under the toolbar
+        let actual = CompareCanvasPlan(.init(geometry: g, zoom: .actual, center: CGPoint(x: 0.5, y: 0.5), divider: 0.5,
+                                             showsOriginal: false, showsDifferences: false, originalAvailable: true,
+                                             hasOriginalImage: true, hasDifferencesImage: false))
+        let full = try #require(actual.dividerLine)
+        #expect(full.minY == 52 && full.maxY == g.viewSize.height && full.minX == 560)
     }
 
     @Test func differencesCoverTheFrameInSplit() {

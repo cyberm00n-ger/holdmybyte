@@ -60,7 +60,7 @@ enum StateCatalogue {
             Scenarios.setup(scanNotices: [.alreadyCompressed(count: 312, of: 535)])
         },
         CatalogueEntry("setup-blocked-disk", "§2.4 S5") {
-            Scenarios.setup(preflightNotices: [.notEnoughSpace(volume: "Macintosh HD", needed: 1_900_000_000, available: 800_000_000)])
+            Scenarios.setup(preflightNotices: [.notEnoughSpace(volume: "Macintosh HD", needed: Fixtures.defaultDeliveriesBytes, available: 800_000_000)])
         },
         CatalogueEntry("setup-create-more", "§2.4 S4, §1.2 F3") { Scenarios.createMore() },
         CatalogueEntry("drop-on-setup", "§2.4 S3") {

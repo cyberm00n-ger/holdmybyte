@@ -5,36 +5,61 @@ import SwiftUI
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.locale) private var locale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isSnapshotRendering) private var isSnapshotRendering
+
+    /// What to keep scrolled into view: the selected wedding and the section it sits in (a finished job moves).
+    struct RevealKey: Equatable { var id: WeddingID; var inProgress: Bool; var section: String? }
+
+    private func revealKey(_ sections: SidebarSections) -> RevealKey? {
+        guard case .wedding(let id) = model.state.selection, let record = model.record(id) else { return nil }
+        let section = sections.months.first { $0.records.contains { $0.id == id } }?.title
+        return RevealKey(id: id, inProgress: record.phase.isInProgress, section: section)
+    }
 
     var body: some View {
         let sections = SidebarSections(model.state, locale: locale)
         VStack(spacing: 0) {
-            List(selection: model.selectionBinding) {
-                NewWeddingRow().tag(SidebarSelection.newWedding)
-                if !sections.active.isEmpty {
-                    Section(Copy.Sidebar.inProgress) {
-                        ForEach(sections.active) { record in
-                            WeddingRow(record: record).tag(SidebarSelection.wedding(record.id))
+            ScrollViewReader { scroller in
+                List(selection: model.selectionBinding) {
+                    NewWeddingRow().tag(SidebarSelection.newWedding)
+                    if !sections.active.isEmpty {
+                        Section(Copy.Sidebar.inProgress) {
+                            ForEach(sections.active) { record in
+                                WeddingRow(record: record).tag(SidebarSelection.wedding(record.id))
+                            }
+                        }
+                    }
+                    ForEach(sections.months) { group in
+                        Section(group.title) {
+                            ForEach(group.records) { record in
+                                WeddingRow(record: record).tag(SidebarSelection.wedding(record.id))
+                            }
                         }
                     }
                 }
-                ForEach(sections.months) { group in
-                    Section(group.title) {
-                        ForEach(group.records) { record in
-                            WeddingRow(record: record).tag(SidebarSelection.wedding(record.id))
-                        }
+                .listStyle(.sidebar)
+                .overlay {
+                    if sections.isSearching && sections.isEmpty {
+                        ContentUnavailableView.search(text: model.state.search)
                     }
                 }
-            }
-            .listStyle(.sidebar)
-            .overlay {
-                if sections.isSearching && sections.isEmpty {
-                    ContentUnavailableView.search(text: model.state.search)
+                .contextMenu(forSelectionType: SidebarSelection.self) { items in
+                    if let id = items.first?.weddingID, let record = model.record(id) {
+                        WeddingContextMenu(record: record)
+                    }
                 }
-            }
-            .contextMenu(forSelectionType: SidebarSelection.self) { items in
-                if let id = items.first?.weddingID, let record = model.record(id) {
-                    WeddingContextMenu(record: record)
+                // The selected wedding is always on screen: when a job finishes or fails (its row moves from In Progress
+                // to its month), when Create More selects it, and when it is selected from elsewhere (Dock, menus).
+                .onChange(of: revealKey(sections), initial: true) { _, key in
+                    guard let key else { return }
+                    Task { @MainActor in
+                        if isSnapshotRendering {
+                            scroller.scrollTo(key.id)
+                        } else {
+                            withAnimation(Tokens.Motion.standard(reduceMotion: reduceMotion)) { scroller.scrollTo(key.id) }
+                        }
+                    }
                 }
             }
             // Lifetime footer (§2.3): below the list rather than a safe-area inset, so rows never scroll under it.
@@ -51,9 +76,12 @@ struct SidebarView: View {
             }
         }
         .toolbar {
-            ToolbarItem {
-                Button { model.newWedding() } label: { Label(Copy.Toolbar.newWedding, systemImage: "plus") }
-                    .help(Copy.Toolbar.newWeddingHelp)
+            // §2.2: only while the sidebar is visible (a collapsed sidebar's items would stay in the title bar).
+            if model.state.sidebarVisible {
+                ToolbarItem {
+                    Button { model.newWedding() } label: { Label(Copy.Toolbar.newWedding, systemImage: "plus") }
+                        .help(Copy.Toolbar.newWeddingHelp)
+                }
             }
         }
     }

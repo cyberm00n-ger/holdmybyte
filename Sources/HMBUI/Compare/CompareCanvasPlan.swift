@@ -18,8 +18,26 @@ struct CompareCanvasPlan: Equatable {
     }
 
     var placements: [Slot: Placement]
+    /// The split divider line in view coordinates: zero width at its x, spanning the visible photo (never the
+    /// letterbox, the area under the toolbar or the HUD). nil: no divider shown.
+    var dividerLine: CGRect?
+    /// The visible photo the divider moves across (view coordinates); the divider fraction is relative to it.
+    var dividerSpan: CGRect?
+
     /// Split divider x in view coordinates (nil: no divider shown).
-    var dividerX: CGFloat?
+    var dividerX: CGFloat? { dividerLine?.minX }
+
+    /// Whether `point` (view coordinates) grabs the divider line (6 pt either side).
+    func isOnDivider(_ point: CGPoint) -> Bool {
+        guard let line = dividerLine else { return false }
+        return abs(point.x - line.minX) <= 6 && point.y >= line.minY && point.y <= line.maxY
+    }
+
+    /// The divider fraction for a pointer at `x` (view coordinates), relative to the visible photo.
+    func dividerFraction(atX x: CGFloat) -> Double? {
+        guard let span = dividerSpan, span.width > 0 else { return nil }
+        return Double(min(1, max(0, (x - span.minX) / span.width)))
+    }
 
     struct Input: Equatable {
         var geometry: CompareGeometry
@@ -49,14 +67,20 @@ struct CompareCanvasPlan: Equatable {
         placements[.original] = Placement(clip: main, frame: mainFrame, visible: comparing)
         placements[.differences] = Placement(clip: main, frame: mainFrame, visible: showDifferences)
 
-        var dividerX: CGFloat?
+        var dividerLine: CGRect?
+        var dividerSpan: CGRect?
         if geometry.mode == .split {
             placements[.leftOriginal] = Placement(clip: .zero, frame: .zero, visible: false)
             if comparing {
-                let x = (main.width * CGFloat(input.divider)).rounded()
+                let span = geometry.visiblePhotoRect(in: main.size, zoom: input.zoom, center: input.center)
+                    .offsetBy(dx: main.minX, dy: main.minY)
+                let x = (span.minX + span.width * CGFloat(min(1, max(0, input.divider)))).rounded()
                 let clip = CGRect(x: x, y: main.minY, width: max(0, main.maxX - x), height: main.height)
                 placements[.delivered] = Placement(clip: clip, frame: mainFrame, visible: !showOriginal && !showDifferences)
-                if !showOriginal && !showDifferences { dividerX = x }
+                if !showOriginal && !showDifferences, span.width > 0, span.height > 0 {
+                    dividerLine = CGRect(x: x, y: span.minY, width: 0, height: span.height)
+                    dividerSpan = span
+                }
             } else {
                 placements[.delivered] = Placement(clip: main, frame: mainFrame, visible: true)
             }
@@ -66,6 +90,7 @@ struct CompareCanvasPlan: Equatable {
             placements[.delivered] = Placement(clip: main, frame: mainFrame, visible: !showOriginal && !showDifferences)
         }
         self.placements = placements
-        self.dividerX = dividerX
+        self.dividerLine = dividerLine
+        self.dividerSpan = dividerSpan
     }
 }
