@@ -1,4 +1,4 @@
-// WP0 stub; WP1 owns this file. hmb_codec_versions is real so the vendored archive is linked and checked.
+// holdmybyte codec bridge: shared buffer helpers and version string (Docs/SPEC.md §3.13). Owned by WP1.
 #include "hmb_codecs.h"
 
 #include <cstdio>
