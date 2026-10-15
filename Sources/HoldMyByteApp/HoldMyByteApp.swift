@@ -1,50 +1,71 @@
-// WP0 stub; WP3 owns this file (@main, AppDelegate, AppCommands, AppModel.live(), Dock, notifications).
-import SwiftUI
-import HMBEngine
+// The app (§2.1 scene skeleton): one main Window, Settings, the transient MenuBarExtra, a Help window.
+import AppKit
 import HMBModel
-import HMBStore
 import HMBUI
+import SwiftUI
 
 @main
 struct HoldMyByteApp: App {
-    @State private var model = AppModel.live()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     var body: some Scene {
-        WindowGroup("holdmybyte") {
-            RootView(model: model)
+        let model = delegate.model
+        Window("holdmybyte", id: WindowID.main) {
+            MainWindowContent(model: model, delegate: delegate)
         }
         .defaultSize(Tokens.Layout.windowDefault)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unified)
+        .commands { AppCommands(model: model) }
+
         Settings {
             SettingsView(model: model)
+                .environment(model)
+                .hmbAccent()
         }
+
+        MenuBarExtra(isInserted: Binding(get: { model.showsTransientStatusItem },
+                                         set: { model.showsTransientStatusItem = $0 })) {
+            StatusMenu(model: model)
+        } label: {
+            StatusItemLabel(fraction: model.overallFraction)
+        }
+
+        Window(Copy.Help.qualityMenuItem, id: WindowID.quality) {
+            QualityExplainer()
+                .frame(width: 360)
+                .fixedSize()
+                .hmbAccent()
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
     }
 }
 
-extension AppModel {
-    /// WP3 wires LiveEngine and the HMBStore stores here (§5.3). Until then: the stub engine and in-memory stores.
-    @MainActor static func live() -> AppModel {
-        AppModel(state: AppState(), engine: LiveEngine(primitives: .fakes()), history: ScaffoldHistory(),
-                 presetsStore: ScaffoldPresets(), settingsStore: ScaffoldSettings(), thumbnails: ScaffoldThumbnails())
+enum WindowID {
+    static let main = "main"
+    static let quality = "quality"
+}
+
+/// The main window's root: hands the window-opening actions to the delegate and the model, then shows RootView.
+struct MainWindowContent: View {
+    let model: AppModel
+    let delegate: AppDelegate
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        RootView(model: model)
+            .onAppear {
+                let open = openWindow
+                delegate.openMainWindow = {
+                    NSApplication.shared.activate()
+                    open(id: WindowID.main)
+                }
+                model.platform.openMainWindow = { delegate.openMainWindow() }
+                let settings = openSettings
+                model.platform.openSettings = { settings() }
+            }
+            .task { await delegate.bootstrapOnce() }
     }
-}
-
-private actor ScaffoldHistory: HistoryStoring {
-    func loadAll() async throws -> [WeddingRecord] { [] }
-    func save(_ record: WeddingRecord) async throws {}
-    func remove(_ id: WeddingID) async throws {}
-    func removeAll() async throws {}
-}
-
-private struct ScaffoldPresets: PresetStoring {
-    func load() -> (presets: [DeliveryPreset], defaultOn: [DeliveryID]) { (DeliveryPreset.builtIns, DeliveryPreset.defaultOnIDs) }
-    func save(presets: [DeliveryPreset], defaultOn: [DeliveryID]) {}
-}
-
-private struct ScaffoldSettings: SettingsStoring {
-    func load() -> AppSettings { AppSettings() }
-    func save(_ settings: AppSettings) {}
-}
-
-private struct ScaffoldThumbnails: ThumbnailProviding {
-    func thumbnail(for photo: SourcePhoto, maxPixelSize: Int) async -> SendableImage? { nil }
 }
