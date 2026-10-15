@@ -76,4 +76,42 @@ import Testing
                      url.lastPathComponent, gpu, cpu, gpu - cpu, seconds, LocalData.loadAverage()))
         #expect(abs(gpu - cpu) <= 0.02)
     }
+
+    /// Timings of the other primitives on one 45 MP sample (median of 3), for Docs/METRIC.md and WP2's budget.
+    @Test(.enabled(if: LocalData.benchEnabled && LocalData.hasSamples))
+    func primitiveTimings() throws {
+        let decoder = ImageIODecoder(), processing = VImageProcessing()
+        let jpeg = JpegliEncoder(), webp = LibWebPEncoder(), jxl = LibJXLTranscoder()
+        let url = LocalData.samplePhotos[0]
+        func median(_ label: String, runs: Int = 3, _ body: () throws -> Void) rethrows {
+            var times: [Double] = []
+            for _ in 0..<runs { times.append(try Measure.seconds(body)) }
+            print(String(format: "[primitive-bench] %@: %.3f s (%@)", label, Measure.median(times), LocalData.loadAverage()))
+        }
+        var info: SourceInfo!
+        try median("inspect (header only)") { info = try decoder.inspect(url) }
+        var source: PixelImage!
+        try median("ImageIO decode 45 MP source") { source = try decoder.decode(info) }
+        median("features") { _ = processing.features(source) }
+        median("resize to 2560") { _ = processing.resized(source, longEdge: 2560) }
+        median("resize to 1440") { _ = processing.resized(source, longEdge: 1440) }
+        median("mosaic") { _ = processing.mosaic(source) }
+        let p3 = PixelImage(width: source.width, height: source.height, colorSpace: CGColorSpace(name: CGColorSpace.displayP3)!)
+        p3.pixels.copyMemory(from: UnsafeRawBufferPointer(source.pixels))
+        median("sRGB conversion (Display P3 → sRGB) 45 MP") { _ = processing.convertedToSRGB(p3) }
+        var encoded = Data()
+        try median("jpegli encode 45 MP d2.0 4:2:0 p2") { encoded = try jpeg.encode(source, distance: 2, subsampling: .s420, markers: []) }
+        try median("jpegli encode 45 MP d2.0 4:4:4 p2") { _ = try jpeg.encode(source, distance: 2, subsampling: .s444, markers: []) }
+        try median("ImageIO decode 45 MP candidate") { _ = try decoder.decode(encoded: encoded) }
+        let web = processing.resized(source, longEdge: 2560)
+        var prepared: WebPPrepared!
+        try median("WebP prepare (sharp YUV) 2560") { prepared = try webp.prepare(web) }
+        try median("WebP encode 2560 q75 m4") { _ = try webp.encode(prepared, quality: 75, icc: nil, exif: nil, xmp: nil) }
+        let original = info.fileBytes
+        var archived = Data()
+        try median("JXL transcode 45 MP e7", runs: 1) { archived = try jxl.transcodeLossless(jpeg: original, effort: 7) }
+        try median("JXL reconstruct 45 MP", runs: 1) { _ = try jxl.reconstructJPEG(jxl: archived) }
+        print(String(format: "[primitive-bench] JXL %d → %d bytes (%.1f %%)", original.count, archived.count,
+                     (Double(archived.count) / Double(original.count) - 1) * 100))
+    }
 }

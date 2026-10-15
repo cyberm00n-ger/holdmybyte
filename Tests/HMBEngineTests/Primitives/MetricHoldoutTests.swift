@@ -13,7 +13,17 @@ import Foundation
 import Testing
 
 @Suite(.serialized) struct MetricHoldoutTests {
-    static let djpeg = URL(fileURLWithPath: ProcessInfo.processInfo.environment["HMB_DJPEG"] ?? "/opt/homebrew/opt/jpeg-turbo/bin/djpeg")
+    /// libjpeg-turbo's `djpeg` (test-only tool): HMB_DJPEG, else the first `djpeg` on PATH; the comparison A is
+    /// skipped without it.
+    static let djpeg: URL = {
+        let env = ProcessInfo.processInfo.environment
+        if let path = env["HMB_DJPEG"] { return URL(fileURLWithPath: path) }
+        for directory in (env["PATH"] ?? "").split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(directory)).appending(path: "djpeg")
+            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
+        }
+        return URL(fileURLWithPath: "/nonexistent/djpeg")
+    }()
 
     /// Old port (jpegos MetalSSIMULACRA2), both images decoded by ImageIO: `squeeze score` output.
     static let oldPortImageIO: [String: Double] = [
