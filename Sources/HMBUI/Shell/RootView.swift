@@ -33,7 +33,7 @@ public struct RootView: View {
         }
         .animation(Tokens.Motion.stateMorph(reduceMotion: reduceMotion), value: model.state.toast)
         .animation(Tokens.Motion.standard(reduceMotion: reduceMotion), value: model.state.sidebarVisible)
-        .modifier(AlertPresenter(model: model, excluding: [.clearHistory]))
+        .modifier(AlertPresenter(model: model) { $0 != .clearHistory })
         .sheet(item: renameBinding) { item in
             RenameSheet(model: model, wedding: item.id)
         }
@@ -107,15 +107,20 @@ struct DetailRouter: View {
     }
 }
 
-/// Presents S18 alerts from `AppAlert.copy` (the single source of their copy).
+/// Presents S18 alerts from `AppAlert.copy` (the single source of their copy). `presents` picks the alerts this window
+/// shows: the main window shows all but Clear History; Settings (WP4) can present `.clearHistory` with
+/// `AlertPresenter(model: model) { $0 == .clearHistory }`.
 public struct AlertPresenter: ViewModifier {
     let model: AppModel
-    let excluding: [AppAlert]
+    let presents: (AppAlert) -> Bool
 
-    public init(model: AppModel, excluding: [AppAlert] = []) { self.model = model; self.excluding = excluding }
+    public init(model: AppModel, presents: @escaping (AppAlert) -> Bool = { _ in true }) {
+        self.model = model
+        self.presents = presents
+    }
 
     public func body(content: Content) -> some View {
-        let alert = model.state.alert.flatMap { alert in excluding.contains(alert) ? nil : alert }
+        let alert = model.state.alert.flatMap { presents($0) ? $0 : nil }
         let copy = alert?.copy(in: model.state)
         content.alert(Text(copy?.title ?? ""), isPresented: Binding(get: { alert != nil }, set: { shown in
             if !shown, model.state.alert == alert { model.dismissAlert() }
