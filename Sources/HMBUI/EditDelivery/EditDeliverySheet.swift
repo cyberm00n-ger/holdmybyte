@@ -47,7 +47,9 @@ public struct EditDeliverySheet: View {
                                 .selectionDisabled(!form.isLongEdgeEnabled)
                         }
                         .pickerStyle(.radioGroup)
-                        TextField("Long edge", value: $form.longEdge, format: .number.grouping(.never))
+                        // Bound to the text (not `value:`), so every keystroke is validated and Save can't commit a
+                        // number the field has not parsed yet.
+                        TextField("Long edge", text: $form.longEdgeText)
                             .labelsHidden()
                             .monospacedDigit()
                             .multilineTextAlignment(.trailing)

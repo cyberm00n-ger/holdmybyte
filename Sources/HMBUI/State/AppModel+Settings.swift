@@ -18,14 +18,16 @@ extension AppModel {
     }
 
     /// Inserts or replaces `preset` (by id) and persists. Invalid presets are refused (the sheet never offers them).
-    /// A new preset is appended and, while a setup is open, checked in it. Closes the sheet if it shows this preset.
+    /// A new preset is appended. One added from Setup ("Add Delivery…", the main window's sheet) is also checked in
+    /// the open setup; one added in Settings is not. Closes the sheet if it shows this preset.
     public func savePreset(_ preset: DeliveryPreset) {
         guard preset.validationError == nil else { return }
         if let index = state.presets.firstIndex(where: { $0.id == preset.id }) {
             state.presets[index] = preset
         } else {
             state.presets.append(preset)
-            if state.draft != nil, state.draft?.completedDeliveries[preset.id] == nil {
+            if case .editDelivery(let shown, true) = state.sheet, shown.id == preset.id,
+               state.draft != nil, state.draft?.completedDeliveries[preset.id] == nil {
                 state.draft?.enabled[preset.id] = true
             }
         }

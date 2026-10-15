@@ -100,6 +100,8 @@ enum CompareCopy {
         volume.map { "Connect “\($0)” to compare." } ?? "The original isn’t available."
     }
 
+    /// Not in §2.4 (see WP4-NOTES, Q5): shown when `comparePair` fails, e.g. the delivered file is gone.
+    static let pairUnavailable = "This photo can’t be compared. The delivered file couldn’t be opened."
     static let differencesLegend = "Differences amplified 10×"
     static let originalCapsule = "Original"
 
@@ -209,6 +211,11 @@ extension CompareState {
         } else {
             showsOriginal = false
         }
+    }
+
+    /// A hold whose key-up never arrives (focus moved away) ends: the delivered photo comes back. A latch stays.
+    mutating func originalHoldInterrupted() {
+        if showsOriginal && !originalLatched { showsOriginal = false }
     }
 
     static let latchThreshold: TimeInterval = 0.2

@@ -12,7 +12,14 @@ struct EditDeliveryForm: Equatable {
     var symbol: String
     var format: OutputFormat
     var sizeChoice: SizeChoice
-    var longEdge: Int
+    /// What the long-edge field shows, exactly as typed. Validated live (Save is disabled while it is not a number
+    /// in 400…12000), so the sheet never saves a value the field does not show.
+    var longEdgeText: String
+    /// The typed long edge; 0 when the field is empty or not a whole number (reported as out of range).
+    var longEdge: Int {
+        get { Int(longEdgeText.trimmingCharacters(in: .whitespaces)) ?? 0 }
+        set { longEdgeText = String(newValue) }
+    }
     /// The lossy quality. JPEG XL is always Lossless (the picker shows it, disabled); switching back to a lossy
     /// format brings this choice back.
     var lossyQuality: QualityLevel
@@ -32,8 +39,8 @@ struct EditDeliveryForm: Equatable {
         symbol = preset.symbol
         format = preset.format
         switch preset.size {
-        case .full: sizeChoice = .full; longEdge = Self.defaultLongEdge
-        case .longEdge(let px): sizeChoice = .longEdge; longEdge = px
+        case .full: sizeChoice = .full; longEdgeText = String(Self.defaultLongEdge)
+        case .longEdge(let px): sizeChoice = .longEdge; longEdgeText = String(px)
         }
         lossyQuality = preset.quality == .lossless ? .high : preset.quality
         colour = preset.colour

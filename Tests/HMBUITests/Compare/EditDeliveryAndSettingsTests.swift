@@ -82,6 +82,13 @@ import Testing
             form.longEdge = edge
             if valid { #expect(form.canSave, "\(edge)") } else { Self.expectInvalid(form, Self.edgeMessage) }
         }
+        // The field is validated as typed: empty, partial or non-numeric text disables Save with the range message.
+        for text in ["", "25", "2 560", "2560px", "abc", "99999999999999999999"] {
+            form.longEdgeText = text
+            Self.expectInvalid(form, Self.edgeMessage)
+        }
+        form.longEdgeText = " 2048 "
+        #expect(form.canSave && form.preset.size == .longEdge(2048))
         // Full size ignores the remembered edge.
         form.longEdge = 5
         form.sizeChoice = .full
@@ -177,6 +184,17 @@ import Testing
         invalid.quality = .balanced
         model.savePreset(invalid)
         #expect(model.state.presets[1] == edited)
+    }
+
+    @Test func aDeliveryAddedInSettingsIsNotCheckedInTheOpenSetup() {
+        let model = makeModel()
+        model.state.draft = SetupDraft(name: "Finn und Lissy", scan: .ready(Fixtures.scanResult),
+                                       enabled: [.couple: true, .website: true], naming: .default)
+        // Settings ▸ Deliveries ▸ + presents its own sheet; `state.sheet` is untouched.
+        model.savePreset(Self.print)
+        #expect(model.state.presets.last == Self.print)
+        #expect(model.state.draft?.enabled[Self.print.id] == nil)
+        #expect(model.state.draft?.enabled == [.couple: true, .website: true])
     }
 
     @Test func deleteMoveDefaultOnAndRestore() {

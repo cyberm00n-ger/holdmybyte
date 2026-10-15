@@ -45,6 +45,8 @@ final class ComparePairLoader {
     @ObservationIgnored private var preloadTask: Task<Void, Never>?
     @ObservationIgnored private var differencesTask: Task<Void, Never>?
     @ObservationIgnored private var differencesKey: (Key, Stage)?
+    /// Set by `cancel()`: the current photo's load was stopped and `show` of the same photo must resume it.
+    @ObservationIgnored private var interrupted = false
 
     static let screenCacheLimit = 3
 
@@ -67,7 +69,15 @@ final class ComparePairLoader {
     /// Shows `photo`, loading in stages, then preloads `upcoming` at screen resolution.
     func show(_ key: Key, record: WeddingRecord, engine: any EngineService, thumbnails: any ThumbnailProviding,
               screenPixels: Int, upcoming: [PhotoID]) {
-        guard key != self.key else { return }
+        if key == self.key {
+            // Same photo: nothing to do, unless `cancel()` interrupted it (Compare left the screen and came back,
+            // e.g. the window was closed and reopened). Then resume where it stopped instead of spinning forever.
+            guard interrupted else { return }
+            interrupted = false
+            startLoading(key, record: record, engine: engine, screenPixels: screenPixels, upcoming: upcoming)
+            return
+        }
+        interrupted = false
         loadTask?.cancel()
         differencesTask?.cancel()
         differencesKey = nil
@@ -98,6 +108,11 @@ final class ComparePairLoader {
                 self.timings?.placeholder = elapsed
             }
         }
+        startLoading(key, record: record, engine: engine, screenPixels: screenPixels, upcoming: upcoming)
+    }
+
+    private func startLoading(_ key: Key, record: WeddingRecord, engine: any EngineService, screenPixels: Int, upcoming: [PhotoID]) {
+        loadTask?.cancel()
         loadTask = Task { [weak self] in
             await self?.loadPairs(key, record: record, engine: engine, screenPixels: screenPixels)
             guard let self, !Task.isCancelled, self.key == key else { return }
@@ -106,6 +121,8 @@ final class ComparePairLoader {
     }
 
     private func loadPairs(_ key: Key, record: WeddingRecord, engine: any EngineService, screenPixels: Int) async {
+        guard stage != .full else { return }
+        failure = nil
         do {
             if (stage ?? .placeholder) < .screen {
                 let screen = try await engine.comparePair(record: record, photo: key.photo, delivery: key.delivery, maxPixelSize: screenPixels)
@@ -183,10 +200,15 @@ final class ComparePairLoader {
         return ContinuousClock.now - requested
     }
 
+    /// Stops all work (Compare left the screen). A later `show` of the same photo resumes the load, and a later
+    /// `updateDifferences` computes the differences again.
     func cancel() {
         loadTask?.cancel()
         placeholderTask?.cancel()
         preloadTask?.cancel()
         differencesTask?.cancel()
+        differencesKey = nil
+        isComputingDifferences = false
+        interrupted = key != nil
     }
 }

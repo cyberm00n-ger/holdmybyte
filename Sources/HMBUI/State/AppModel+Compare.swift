@@ -156,6 +156,11 @@ extension AppModel {
         updateCompare { $0.originalKeyUp(heldFor: heldFor, pressStarted: pressStarted) }
     }
 
+    /// The `\` key-up was lost (the window stopped being key while `\` was held): ends the hold, keeps a latch.
+    public func compareOriginalHoldInterrupted() {
+        updateCompare { $0.originalHoldInterrupted() }
+    }
+
     /// Fit ⇄ 100 % around `center` (unit image coordinates of the point that should end up in the middle).
     /// Without a point (menu command), 100 % opens on the kept centre.
     public func toggleCompareZoom(center: CGPoint? = nil) {

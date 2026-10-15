@@ -176,6 +176,22 @@ import Testing
         #expect(model.state.compare?.showsOriginal == false)
     }
 
+    @Test func lostKeyUpEndsTheHoldButKeepsALatch() throws {
+        let model = makeModel()
+        open(model)
+        // Held, then the window lost key status: the key-up never arrives.
+        #expect(model.compareOriginalKeyDown())
+        model.compareOriginalHoldInterrupted()
+        #expect(model.state.compare?.showsOriginal == false)
+        // The next press works normally again (shows, and a tap latches).
+        let tap = model.compareOriginalKeyDown()
+        #expect(tap && model.state.compare?.showsOriginal == true)
+        model.compareOriginalKeyUp(heldFor: 0.1, pressStarted: tap)
+        // A latch is a deliberate state: losing focus keeps it.
+        model.compareOriginalHoldInterrupted()
+        #expect(model.state.compare?.showsOriginal == true && model.state.compare?.originalLatched == true)
+    }
+
     @Test func noOriginalDisablesSplitBackslashAndDifferences() throws {
         let model = makeModel()
         open(model)

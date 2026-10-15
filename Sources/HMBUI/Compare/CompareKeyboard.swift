@@ -8,6 +8,7 @@ import HMBModel
 
 @MainActor final class CompareKeyboard {
     private var monitor: Any?
+    private var resignObserver: (any NSObjectProtocol)?
     private var originalPress: (keyCode: UInt16, started: Bool, at: ContinuousClock.Instant)?
 
     static let backslashKeyCode: UInt16 = 42
@@ -26,11 +27,24 @@ import HMBModel
             }
             return consumed ? nil : event
         }
+        // Holding `\` while the window stops being key (⌘-Tab, a click elsewhere): the key-up goes to another
+        // window, so end the hold here instead of leaving the original shown.
+        resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil,
+                                                                queue: .main) { [weak self, weak model] note in
+            nonisolated(unsafe) let window = note.object as AnyObject?
+            MainActor.assumeIsolated {
+                guard let self, let model, self.originalPress != nil, window === proxy.window else { return }
+                self.originalPress = nil
+                model.compareOriginalHoldInterrupted()
+            }
+        }
     }
 
     func remove() {
         if let monitor { NSEvent.removeMonitor(monitor) }
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
         monitor = nil
+        resignObserver = nil
         originalPress = nil
     }
 
@@ -50,6 +64,8 @@ import HMBModel
         let characters = event.charactersIgnoringModifiers ?? ""
         if event.characters == "\\" || (event.keyCode == Self.backslashKeyCode && modifiers.isEmpty) {
             if event.isARepeat { return true }
+            // A new (non-repeat) press while a hold is still showing means its key-up was lost: end that hold first.
+            model.compareOriginalHoldInterrupted()
             originalPress = (event.keyCode, model.compareOriginalKeyDown(), .now)
             return true
         }

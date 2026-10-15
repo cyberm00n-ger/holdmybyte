@@ -83,7 +83,8 @@ public struct CompareView: View {
                     CompareDivider(model: model, x: (size.width * compare.divider).rounded(), width: size.width,
                                    height: size.height, divider: compare.divider)
                 }
-                centredCapsules(compare: compare, pair: pair, comparing: comparing)
+                centredCapsules(compare: compare, pair: pair, comparing: comparing,
+                                failed: pair == nil && loader.key == key && loader.failure != nil)
             }
             .coordinateSpace(.named(Self.coordinateSpace))
             .overlay(alignment: .top) {
@@ -224,8 +225,12 @@ public struct CompareView: View {
     }
 
     @ViewBuilder
-    private func centredCapsules(compare: CompareState, pair: ComparePair?, comparing: Bool) -> some View {
-        if !compare.originalAvailable {
+    private func centredCapsules(compare: CompareState, pair: ComparePair?, comparing: Bool, failed: Bool) -> some View {
+        if failed {
+            // The pair could not be loaded (e.g. the deliveries folder was moved): say so instead of leaving the
+            // grid thumbnail standing in for the delivered photo.
+            CompareCapsule(text: CompareCopy.pairUnavailable, symbol: "exclamationmark.triangle", height: 32)
+        } else if !compare.originalAvailable {
             CompareCapsule(text: CompareCopy.connectVolume(pair?.unavailableVolume), symbol: "externaldrive.badge.xmark", height: 32)
         } else if compare.showsOriginal && comparing {
             CompareCapsule(text: CompareCopy.originalCapsule, height: 32)
