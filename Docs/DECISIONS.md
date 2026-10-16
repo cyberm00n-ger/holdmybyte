@@ -343,3 +343,43 @@ it leaves the 4:2:0 cases of the wedding open.
 original itself 2–13 points below the reference and are not certified. Lightroom's and Windows' decoders were not
 measured. The "same" pairing (source and file both decoded by libjpeg-turbo) can stay up to 0.33 below T: that is the
 two decodes of the Lightroom original differing, not the compression.
+
+## D-ENG-13 · 2026-10-16 · High-target mode: jpegli without adaptive quantisation at fixed floors ≥ 85; Annex K and baseline not adopted (branch `eng-highest`)
+
+**Decision** (answers D-ENG-11's research recommendation 1). Full-size JPEG deliveries with a fixed floor of 85 or more (High, Highest; not Balanced) are searched in
+a high-target mode: `JPEGTuning.highTarget` = `fullSize`'s table shape with adaptive quantisation **off**, progressive,
+4:2:0 and — from T 89 — also 4:4:4 (mosaic-preselected), the smaller verified result delivered; the tuned search runs
+only when the high mode reaches nothing. A compare band (tuned and high, smaller verified) exists
+(`highCompareFrom..<highFirstFrom`) but is empty by default. The jpegli bridge gains Annex K tables
+(`standard_tables`) and sequential coding (`JPEGKnobs.sequential`); neither is used by default. Evidence and every run:
+`Docs/variants/highest.md`; how it works: Docs/ENGINE.md §3.2.
+
+**Why.** Holdout, release, back to back with main 66e3db0: Highest 191,497,771 → 182,337,941 B (−4.78 %), probes
+2.26 → 2.74, ImageIO min 90.019 → 90.011, libjpeg-turbo min 89.81 → 89.82; High 102,245,961 → 98,776,135 B (−3.39 %),
+probes 2.00 → 1.74. Couple, Website, Social, Archive 76/76 SHA-256-identical; `HMB_HIGH=off` reproduces main's Highest
+and High byte for byte. Wedding Highest: not measured (resource limit). Highest is now below JPEGmini's bytes on the
+holdout (182.3 vs 191.0 MB) with every file ≥ 90 on both decoders, where JPEGmini's files read 79.1–91.5.
+
+**Rejected, with measurements.** (a) **Annex K tables** (research rank 1): in jpegli they lose to jpegli's own tuned
+shape in every mode (4:4:4 AQ off progressive +3.1 % vs main; real pipeline `HMB_HIGH_TABLES=annexk` +3.7 %). At
+identical Annex K tables libjpeg-turbo's encoder is 3–5 % better per byte than jpegli's on this material (integer DCT,
+not the dead zone: a plain-rounding jpegli patch gained ≤ 0.6 % and was dropped, codec pin unchanged). A second encoder
+is not justified: jpegli's best settings (181.5 MB progressive, 174.2 MB baseline, frontier) already meet libjpeg-turbo
+Annex K's 176.3 MB (research F1) on the same gate. (b) **Baseline coding** (−8.6 % more, 175.0 MB): ImageIO reads
+baseline 4:4:4 files 0.35–0.82 above libjpeg-turbo and above an exact float IDCT (which agree within 0.05); every
+baseline Highest file is below 90 for those decoders (89.22–89.80). That contradicts D-ENG-2's premise (ImageIO is the
+low reading); progressive keeps the two decoders as close as main's files (turbo − ImageIO −0.21…+0.25). Kept as
+`HMB_HIGH_SCAN=baseline` for an owner decision. (c) Compare band at 85: −2.6 KB for +2 probes per photo.
+
+**Deviations from SPEC §3 (binding text unchanged; this entry is the record).** E1 "adaptive quantisation on" no longer
+holds for full-size JPEG at fixed floors ≥ 85. E2 "4:4:4 only as fail-open" no longer holds at full size from T 89 in
+the high mode (both searched, mosaic-preselected). §3.4's search order (4:2:0 → rescue → 4:4:4) applies to the tuned
+search; the high mode has its own priors (`Targets.highPrior`), bias prior (−0.3) and rescue floor (d 0.3).
+
+**Risks accepted.** Tuned on 19 photos of one camera with the metric that judges it (no new table shape was fitted:
+`fullSize`'s, only AQ off). Highest costs +24 % wall / +30 % CPU on the holdout (more probes, finer distances, the
+4:4:4 preselection's mosaic encodes). The estimator under-reads the high mode by 3–4 % (κ 1.0 kept). Resized
+deliveries (DirectSearch) are unchanged; they already run 4:4:4 without AQ from T 80.
+
+**Open (owner).** Baseline for Highest (above), possibly with jpegli's decoder as a second in-engine reading; AQ off for
+Balanced (not tested; Couple stays byte-identical by construction).

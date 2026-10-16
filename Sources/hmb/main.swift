@@ -30,7 +30,8 @@ func exitWith(_ error: any Error) -> Never {
 /// HMB_WORKERS (exported by `CommandRunner` before this runs; Docs/DECISIONS.md D-ENG-6). HMB_MEMORY_BUDGET (bytes)
 /// overrides the engine's memory budget for tuning runs (D-ENG-7); the app never sets it. HMB_OPTIMIZE_SCANS and
 /// HMB_XMP_LAYOUT, HMB_ZEROING and HMB_WEBP switch the post-pass variant's parts off or on for A/B runs;
-/// HMB_JPEG_TUNING and HMB_DIRECT444 the search variant's (Docs/DECISIONS.md D-ENG-11).
+/// HMB_JPEG_TUNING and HMB_DIRECT444 the search variant's (Docs/DECISIONS.md D-ENG-11); HMB_HIGH, HMB_HIGH_BAND and
+/// HMB_HIGH_SCAN the high-target mode's (D-ENG-13).
 func liveEngine() throws -> LiveEngine {
     let support = FileManager.default.temporaryDirectory.appending(path: "holdmybyte-cli-\(getpid())", directoryHint: .isDirectory)
     let environment = ProcessInfo.processInfo.environment
@@ -54,6 +55,19 @@ func liveEngine() throws -> LiveEngine {
     if environment["HMB_DIRECT444"] == "off" { options.constants.direct444From = .infinity }
     // Decoder guard (Docs/DECISIONS.md D-ENG-12): HMB_DECODER_GUARD=off|chroma444|all.
     if let mode = environment["HMB_DECODER_GUARD"].flatMap(DecoderGuard.init(rawValue:)) { options.constants.decoderGuard = mode }
+    // Variant "highest" (Docs/variants/highest.md): HMB_HIGH=off (tuned search only, as before), HMB_HIGH_BAND=<compare
+    // from>,<first from> (targets), HMB_HIGH_TABLES=annexk (the high mode with Annex K tables), HMB_HIGH_SCAN=baseline
+    // (the high mode's files sequential instead of progressive).
+    if environment["HMB_HIGH"] == "off" {
+        options.constants.highCompareFrom = .infinity
+        options.constants.highFirstFrom = .infinity
+    }
+    if let band = environment["HMB_HIGH_BAND"]?.split(separator: ",").compactMap({ Double($0) }), band.count == 2 {
+        options.constants.highCompareFrom = band[0]
+        options.constants.highFirstFrom = band[1]
+    }
+    if environment["HMB_HIGH_TABLES"] == "annexk" { options.constants.highTuning = .annexK }
+    if environment["HMB_HIGH_SCAN"] == "baseline" { options.constants.highTuning.sequential = true }
     let webp: WebPTuning = switch environment["HMB_WEBP"] {
     case "spec": .spec
     case "m6": WebPTuning(method: 6)

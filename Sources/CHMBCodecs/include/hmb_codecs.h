@@ -35,6 +35,8 @@ typedef struct {
     float dc_ratio;             // each table's DC entry taken at its distance × this; <= 0 or 1 = off
     const int *scan_choice;     // per-component AC scan script (see hmb_jpeg_choose_scans), NULL = progressive_level's;
                                 // ignored for HMB_JPEGLI_SCAN_PROXY and level 0
+    int standard_tables;        // 1 = the Annex K tables (ITU T.81 K.1/K.2, one chroma table) scaled linearly by jpegli
+                                // from the distance (jpegli_use_standard_quant_tables); 0 = jpegli's own tables
 } hmb_jpegli_options;
 int  hmb_jpegli_encode_opts(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
                             const hmb_jpegli_options *options,

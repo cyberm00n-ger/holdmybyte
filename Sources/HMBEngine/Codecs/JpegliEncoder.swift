@@ -47,9 +47,11 @@ public struct JpegliEncoder: TunableJPEGEncoding {
         guard chroma.isFinite, (0...25).contains(chroma) else { throw PrimitiveError("jpegli: invalid chroma distance \(chroma)") }
         var options = hmb_jpegli_options(distance: Float(distance), chroma_distance: Float(chroma),
                                          sampling: knobs.sampling.code, adaptive_quantization: knobs.adaptiveQuantization ? 1 : 0,
-                                         progressive_level: knobs.scoringOnly && progressiveLevel == 2 ? HMB_JPEGLI_SCAN_PROXY : progressiveLevel,
+                                         progressive_level: knobs.sequential ? 0
+                                            : knobs.scoringOnly && progressiveLevel == 2 ? HMB_JPEGLI_SCAN_PROXY : progressiveLevel,
                                          luma_tilt: Float(knobs.lumaTilt),
-                                         chroma_tilt: Float(knobs.chromaTilt), dc_ratio: Float(knobs.dcRatio), scan_choice: nil)
+                                         chroma_tilt: Float(knobs.chromaTilt), dc_ratio: Float(knobs.dcRatio), scan_choice: nil,
+                                         standard_tables: knobs.standardTables ? 1 : 0)
         // All payloads in one contiguous array, so a single pointer stays valid for the whole C call.
         var storage = [UInt8]()
         storage.reserveCapacity(markers.reduce(0) { $0 + $1.payload.count })
@@ -99,6 +101,13 @@ public struct JPEGKnobs: Sendable, Hashable {
     public var scoringOnly = false
     /// Per-component progressive AC script (variant "postpass"); nil = level 2's. Changes bytes, never the pixels.
     public var scans: JPEGScanChoice?
+    /// The Annex K tables (luma + one shared chroma table) scaled linearly from `distance` by jpegli
+    /// (`jpegli_use_standard_quant_tables`) instead of jpegli's own tables; the high-target mode (Docs/variants/highest.md).
+    public var standardTables = false
+    /// Sequential (baseline, one scan) instead of progressive, also for scoring-only candidates: ImageIO decodes
+    /// baseline and progressive files of the same coefficients differently (research F4), so a candidate that is only
+    /// scored must use the delivered mode. `scans` is ignored.
+    public var sequential = false
 
     public init(distance: Double, chromaDistance: Double? = nil, sampling: Sampling = .s420, adaptiveQuantization: Bool = true) {
         self.distance = distance

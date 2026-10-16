@@ -3,7 +3,7 @@
 // `djpeg` (Chrome, Firefox, Edge, most libjpeg-based software), libwebp's `dwebp` (Chrome, Firefox) and ffmpeg's own
 // decoders, all from PATH (or HMB_DJPEG / HMB_DWEBP / HMB_FFMPEG).
 //
-//   HMB_DECODER_AUDIT=<hmb compress output folder with Couple/Website/Social>  HMB_DECODER_AUDIT_REPORT=<report.json>
+//   HMB_DECODER_AUDIT=<hmb compress output folder with Couple/Website/Social/High/Highest>  HMB_DECODER_AUDIT_REPORT=<report.json>
 //   [HMB_DECODER_AUDIT_SOURCES=<the compressed set, default HMB_HOLDOUT>] [HMB_DECODER_AUDIT_JSON=<out.json>]
 //   [HMB_DECODER_AUDIT_FAST=1: libjpeg-turbo only, in process]
 //   swift test -c release -Xswiftc -enable-testing --filter DecoderAuditTests
@@ -158,7 +158,8 @@ enum ExternalDecode {
         let fm = FileManager.default
         print("[audit] \(LiveGate.uptime()); jpeg decoders \(ExternalDecode.jpegDecoders.map(\.name)), webp \(ExternalDecode.webpDecoders.map(\.name))")
         let deliveries: [(folder: String, id: String, edge: Int?, srgb: Bool)] = [
-            ("Couple", "couple", nil, false), ("Website", "website", 2560, true), ("Social", "social", 1440, true)]
+            ("Couple", "couple", nil, false), ("Website", "website", 2560, true), ("Social", "social", 1440, true),
+            ("High", "high-full", nil, false), ("Highest", "highest-full", nil, false)]
         var lines: [Line] = []
         // The file stems `hmb compress` gave each photo (capture order, the scan's suggested name).
         let stems = JobRunner.stems(request: makeRequest(name: scan.suggestedName, photos: scan.photos, roots: scan.sourceRoots,
@@ -230,7 +231,7 @@ enum ExternalDecode {
             try encoder.encode(lines).write(to: URL(fileURLWithPath: out))
         }
         // Summary: minimum margin per delivery and pairing.
-        for id in ["couple", "website", "social"] {
+        for id in ["couple", "website", "social", "high-full", "highest-full"] {
             let rows = lines.filter { $0.delivery == id }
             guard !rows.isEmpty else { continue }
             var summary = String(format: "[audit] %@ n %d engine min %+.4f", id, rows.count, rows.map { $0.engine - $0.target }.min()!)
