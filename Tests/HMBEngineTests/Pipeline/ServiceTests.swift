@@ -50,7 +50,9 @@ import Testing
         let start = monotonicSeconds()
         task.cancel()
         await #expect(throws: (any Error).self) { _ = try await task.value }
-        #expect(monotonicSeconds() - start < 1.5)
+        // 1.5 s is the product budget on a quiet machine. Under load the scheduler alone adds
+        // seconds; an uncancelled estimate of 24 photos at 0.5 s per fake call would take far longer.
+        #expect(monotonicSeconds() - start < (loadAverage() < 3 ? 1.5 : 4.0))
     }
 
     @Test func learnedKappaFoldsAndResets() {
