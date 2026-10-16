@@ -26,9 +26,10 @@ JXL_BUILD lib/include/jxl/version.h jxl/version.h
 JXL_BUILD lib/include/jxl/jxl_export.h jxl/jxl_export.h
 JXL_BUILD lib/include/jxl/jxl_cms_export.h jxl/jxl_cms_export.h
 JXL_BUILD lib/include/jxl/jxl_threads_export.h jxl/jxl_threads_export.h
-# jpegli native API (include "lib/jpegli/encode.h")
+# jpegli native API (include "lib/jpegli/encode.h", "lib/jpegli/decode.h": coefficient read for the post-pass)
 JXL_SRC lib/jpegli/common.h lib/jpegli/common.h
 JXL_SRC lib/jpegli/encode.h lib/jpegli/encode.h
+JXL_SRC lib/jpegli/decode.h lib/jpegli/decode.h
 JXL_SRC lib/jpegli/types.h lib/jpegli/types.h
 JXL_SRC lib/jxl/base/include_jpeglib.h lib/jxl/base/include_jpeglib.h
 # libjpeg struct definitions as configured by the jxl build (jpegli ABI)
