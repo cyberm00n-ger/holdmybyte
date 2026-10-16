@@ -990,16 +990,20 @@ Single-letter keys are active only while Compare is focused. They are declared o
 
 The engine proposal was empty. The decisions below come from the experiment files and today's re-measurements. Every number carries a tag (see the introduction): **[M]** measured, **[S]** simulated, **[B]** budget.
 
+**As built (updated 2026-10-16).** The engine lead's decisions D-ENG-1…14 (`Docs/DECISIONS.md`) amend this section.
+The rows and subsections below state the engine as it now is; each amendment names its decision, and
+`Docs/ENGINE.md` holds the measurements. Original rationale is kept where it still explains the choice.
+
 | # | Decision | Evidence | Rejected alternative |
 |---|---|---|---|
-| E1 | **One JPEG encoder: jpegli, linked in-process via its native `jpegli_*` API.** No mozjpeg, no QuantRefiner, no encoder competition. | **[S]** On the 19-photo holdout at the old engine's per-photo reference-scale scores, jpegli 4:2:0 alone gives 49.28 MB vs. the old engine's 49.81 MB (−1.1 %) with a bracketing search (`search-analysis.txt`), and 49.47 MB (−0.7 %) / 49.86 MB (+0.1 %) with the proxy-guided search (`sim-A.txt`, `sim-B.json`). jpegli 4:4:4 won 0 of 19. | The old competition (moz420/moz444/jpegli420/jpegli444 + refiner): 2 libjpegs with clashing symbols, a subprocess helper, and 66 % of CPU spent on a rider. |
-| E2 | **4:4:4 only as fail-open**, when 4:2:0 cannot reach the target at d ≥ 0.5. The gate `chromaEnergy ≥ 2.42 → also search 4:4:4` exists behind a flag that is **off** by default and is switched on only if gate G3 (§6) fails. | jpegli444 won 7/533 on the old harvest. `chroma-0110.txt` **[M]**: on the most chroma-rich sample, 4:2:0 at d1.6 gives 74.80 @ 3.41 MB, while 4:4:4 needs about 3.85 MB for the same score. | Always searching both (2× the probes on about 25 % of photos for ~1 % of wins). |
-| E3 | **Delivered bytes are exactly the scored bytes.** Probes are encoded at the final setting: progressive level 2, adaptive quantisation on. There is no "probe at p0, re-encode at p2". | `jpegli-modes.txt` **[M]**: p2 is 2.4–3.1 % smaller than p0 at the same distance, but costs 0.76 s vs 0.37 s **[M today]**. CPU is not the bottleneck (§3.11), so the stronger guarantee is worth 0.4 CPU-s. | `photo-pipeline.sh`'s p0-probe/p2-final model: it relies on a pixel-identity assumption that nobody has tested. |
-| E4 | **Search = mosaic proxy + bias-corrected full-resolution probes**, mean about 2.0 and at most 3 full probes, with constants from `simulate.py` and `STOP = 0.5`. | `proxy-analysis.txt` **[M]**: grid mosaic full−mosaic bias mean −1.49, sd 0.61, slope correlation 0.97 (the "hard" mosaic is worse: sd 1.32). `sim-B` **[S]**: 2.0 probes mean, 3 max, 0/19 unresolved, overshoot max 0.51. | The "hard" tile mosaic; half- or quarter-scale proxies (`scale-analysis.txt`: quarter-scale residual 4.5 points, so it is useless). |
+| E1 | **One JPEG encoder: jpegli, linked in-process via its native `jpegli_*` API.** No mozjpeg, no QuantRefiner, no encoder competition. *As built (D-ENG-11):* jpegli's own tables are reshaped per search (`JPEGTuning.fullSize`: chroma tables at d × 0.65, DC at d × 0.8, luma AC tilted up to × 4.95 at high frequencies, AQ on; `JPEGTuning.resized`: chroma at d × 0.7, **adaptive quantisation off**). Every output is still a standard progressive jpegli JPEG. *As built (D-ENG-13):* full-size JPEG at a fixed floor ≥ 85 (High, Highest; never Balanced) uses `JPEGTuning.highTarget` = `fullSize`'s shape with **adaptive quantisation off** (§3.4 high mode); Annex K tables and baseline coding exist as switches only. | **[S]** On the 19-photo holdout at the old engine's per-photo reference-scale scores, jpegli 4:2:0 alone gives 49.28 MB vs. the old engine's 49.81 MB (−1.1 %) with a bracketing search (`search-analysis.txt`), and 49.47 MB (−0.7 %) / 49.86 MB (+0.1 %) with the proxy-guided search (`sim-A.txt`, `sim-B.json`). jpegli 4:4:4 won 0 of 19. | The old competition (moz420/moz444/jpegli420/jpegli444 + refiner): 2 libjpegs with clashing symbols, a subprocess helper, and 66 % of CPU spent on a rider. |
+| E2 | **4:4:4 only as fail-open**, when 4:2:0 cannot reach the target at d ≥ 0.5. The gate `chromaEnergy ≥ 2.42 → also search 4:4:4` exists behind a flag that is **off** by default and is switched on only if gate G3 (§6) fails. *As built (D-ENG-11):* holds for full size; DirectSearch JPEG at T ≥ 80 (Social at 85) searches **4:4:4 first** and no 4:2:0 (with `resized` tables 4:4:4 is 7–12 % smaller at T 85, and 4:2:0 cannot reach 90 at 1440 px). *As built (D-ENG-13):* the full-size high mode searches 4:4:4 next to 4:2:0 from T 89 (mosaic-preselected) and delivers the smaller verified result. | jpegli444 won 7/533 on the old harvest. `chroma-0110.txt` **[M]**: on the most chroma-rich sample, 4:2:0 at d1.6 gives 74.80 @ 3.41 MB, while 4:4:4 needs about 3.85 MB for the same score. | Always searching both (2× the probes on about 25 % of photos for ~1 % of wins). |
+| E3 | **Delivered bytes are exactly the scored bytes.** Probes are encoded at the final setting: progressive level 2, adaptive quantisation on. There is no "probe at p0, re-encode at p2". *As built (D-ENG-11):* holds for every full-size output; full probes use a per-component progressive AC script chosen from the first mosaic encode (same coefficients). A DirectSearch JPEG may be delivered as a **lossless scan rewrite** of the scored file (kept only when ImageIO decodes both to identical pixels; the coefficients are identical, so every decoder agrees) or as a rewrite that zeroes isolated ±1 coefficients, which is **scored as delivered**. The mosaic proxy uses a 4-scan script with the same coefficients. | `jpegli-modes.txt` **[M]**: p2 is 2.4–3.1 % smaller than p0 at the same distance, but costs 0.76 s vs 0.37 s **[M today]**. CPU is not the bottleneck (§3.11), so the stronger guarantee is worth 0.4 CPU-s. | `photo-pipeline.sh`'s p0-probe/p2-final model: it relies on a pixel-identity assumption that nobody has tested. |
+| E4 | **Search = mosaic proxy + bias-corrected full-resolution probes**, mean about 2.0 and at most 3 full probes, with constants from `simulate.py` and `STOP = 0.5`. *As built (D-ENG-3):* the mosaic is encoded and scored *at the probe's own distance* (`.mosaicExact`, §3.4); holdout 1.84 full probes mean, max 3. | `proxy-analysis.txt` **[M]**: grid mosaic full−mosaic bias mean −1.49, sd 0.61, slope correlation 0.97 (the "hard" mosaic is worse: sd 1.32). `sim-B` **[S]**: 2.0 probes mean, 3 max, 0/19 unresolved, overshoot max 0.51. | The "hard" tile mosaic; half- or quarter-scale proxies (`scale-analysis.txt`: quarter-scale residual 4.5 points, so it is useless). |
 | E5 | **Metric = port of the old Metal SSIMULACRA2** (FIR Gaussian, cached reference session), *not* a new implementation. All floors (85, Balanced 74…87) are defined on this scale, the same scale as every DATENLAGE number. | Old port GPU vs CPU agreement ≤ 0.01. Holdout **[M]**: port scores read +0.53 above the libjxl reference binary on average at about 74 (`old-holdout-ownscores.txt` vs `-refscores.txt`). | A new IIR-exact kernel: it shifts every floor and invalidates all benchmark comparisons for v1. It is recorded as a v1.x task. |
-| E6 | **Decode with ImageIO** for sources and candidates (no colour conversion, no orientation applied). | **[M today]**: ImageIO 45 MP decode 0.10 s + 0.012 s blit, vs libjpeg-turbo 0.28–0.30 s (`bench/iio`, `bench/dec`). | libjpeg-turbo (a third libjpeg, symbol clash with jpegli's wrapper). |
+| E6 | **Decode with ImageIO** for sources and candidates (no colour conversion, no orientation applied). *As built:* ImageIO stays the scoring decoder (D-ENG-2). **Decoder guard (D-ENG-12):** a JPEG candidate that passes is also decoded the way libjpeg-turbo does it (browsers; in process, from jpegli's coefficients) and the lower score counts (resized searches: every passing probe; full-size searches: the candidate about to be delivered). ImageIO's WebP pixels are libwebp's, so WebP needs no second decode. | **[M today]**: ImageIO 45 MP decode 0.10 s + 0.012 s blit, vs libjpeg-turbo 0.28–0.30 s (`bench/iio`, `bench/dec`). | libjpeg-turbo (a third libjpeg, symbol clash with jpegli's wrapper). |
 | E7 | **Website = WebP only.** If WebP can't reach the floor, fall back to JPEG. **No AVIF in v1.** | DATENLAGE §8: WebP 2560/≥70 = 159 MB, −98.5 %, reached on every photo. AVIF (`avif-web.txt`) is smaller, but needs libaom (a huge vendoring burden) and has spottier CMS/upload support. | AVIF as the default or as a fallback tier. |
-| E8 | **Archive = libjxl lossless JPEG transcode, effort 7, verified by reconstruction plus SHA-256.** | **[M today]**: 45 MP sample, 1.90 s encode + 1.16 s reconstruct, single thread, `cmp` byte-exact, −22.1 %. e9 saves only 0.4 % more (`jxl/`). | Effort 9. |
+| E8 | **Archive = libjxl lossless JPEG transcode, effort 7, verified by reconstruction plus SHA-256.** *As built (D-ENG-10/11):* up to 4 threads per transcode and verification (output independent of the thread count), libjxl memory from a per-call arena, archives as their own work items. | **[M today]**: 45 MP sample, 1.90 s encode + 1.16 s reconstruct, single thread, `cmp` byte-exact, −22.1 %. e9 saves only 0.4 % more (`jxl/`). | Effort 9. |
 | E9 | **One process, real worker `Thread`s, one GPU metric lane.** | LESSONSLEARNED §13 (GCD starvation) and DATENLAGE §7 (lanes 1→3 gain nothing; width 5 was optimal with the old per-photo cost). | Swift-concurrency task groups blocking on engine gates. |
 | E10 | **No predictor, no student metric, no grain synthesis, no training log** in v1. | DATENLAGE §2 failed-attempts ledger; grain synthesis is unverifiable with full-reference metrics. | — |
 
@@ -1123,6 +1127,14 @@ public struct EnginePrimitives: Sendable {
 }
 ```
 
+*As built (additive, D-ENG-10/11/12):* `JPEGEncoding` gained `encodeForScoring` (same coefficients, 4-scan proxy
+script, for the mosaic), `encode(…, scans:)` and `chooseScans` (per-component AC script, `JPEGScanChoice`), and
+`TunableJPEGEncoding` takes a `JPEGTuning`; `live(webpTuning:)` builds `LibWebPEncoder` with `WebPTuning.default`
+(method 6, loop-filter strength 40, sharpness 7 on `WEBP_PRESET_PHOTO`); `PixelImage` ≥ 1 MB is an anonymous mapping
+and decoded candidates may wrap ImageIO's buffer; `IslowDecoder` decodes a JPEG to libjpeg-turbo's pixels (decoder
+guard), reached through `EnginePrimitives.viewerDecoder` (live: `IslowDecoder`; fakes and the memberwise default: nil,
+no guard). The fakes implement the defaults.
+
 ### 3.3 Per-photo pipeline (one decode, all deliveries)
 
 Each worker processes one photo end to end:
@@ -1135,8 +1147,9 @@ Each worker processes one photo end to end:
 4. for delivery in executionOrder:   resized lossy (ascending long edge) → full-size lossy → archive
      source variant V = S → (convertedToSRGB if colour == .convertToSRGB) → (resized if longEdge < max(W,H))
      (variants are cached per photo by (colour, longEdge); a resize is computed at most once)
-     lossy:   bytes = search(V, target(delivery, features))      §3.4 / §3.5
-     archive: bytes = archive(info)                              §3.6
+     lossy:   meta = final metadata (§3.7), built before the search so every probe carries it (scored = written)
+              bytes = search(V, target(delivery, features))      §3.4 / §3.5
+     archive: bytes = archive(info)                              §3.6 (as built: a separate work item of the photo, D-ENG-10)
      metadata applied (§3.7), then OutputWriter.write(bytes, for: photo, delivery)   §3.8
 5. release S, the variants and the metric references; append PhotoResults to the journal; emit events
 ```
@@ -1148,43 +1161,72 @@ Targets:
 ### 3.4 Full-size JPEG search (`MosaicSearch`)
 
 The constants are binding. WP2 may retune them only with a holdout A/B recorded in `Docs/ENGINE.md`.
+*As built:* the aim is `.mosaicExact` (D-ENG-3); the original §3.4 loop stays selectable as `.proxyCurve` with its
+constants (M0 = 0.6, M1 = 0.15, BIAS = −1.5, STOP = 0.5). Probes and mosaic use `JPEGTuning.fullSize` (D-ENG-11).
 
 ```
-Inputs: V (full-size variant), target T, source bytes B_src (for keep-original), sourceIsJPEG, colour
-Constants: M0 = 0.6, M1 = 0.15, BIAS = −1.5, STOP = 0.5, MAX_FULL = 3, RESCUE = 2, D_MIN = 0.5
-prior(T)   = exp(0.693 + 0.06 · (74 − T))         // 74→2.00, 85→1.03, 90→0.77; WP2 refits on holdout + full wedding, records fit
+Inputs: V (full-size variant), target T, source bytes B_src (for keep-original), sourceIsJPEG, colour, chroma (4:2:0)
+Constants: MAX_FULL = 3, RESCUE = 2, D_MIN = 0.5, bias prior −1.1, bias slope −0.6 / ln d, first margin 0,
+           margin 0.03, stop 0.15, min step 0.003 (ln d), rescue margin 0.3, solver ≤ 6 mosaic evaluations / width 0.004
+prior(T)   = exp(0.693 + 0.06 · (74 − T))         // 74→2.00, 85→1.03, 90→0.77 (holdout replay: no refit needed)
 mosaic M   = processing.mosaic(V)                  // 8 cols × 4 rows of 256×256 tiles, each centred in its cell, origin floored to /16
-proxy      : for d in prior(T)·{0.8, 1.0, 1.25}: s_m(d) = score(decode(jpeg(M, d, 4:2:0)), ref(M))
-curve      : s_m(ln d) piecewise-linear through the 3 points, linear extrapolation outside; inv(t) = bisection on ln d ∈ [ln 0.3, ln 8], 60 iterations
-refV       = metric.prepareReference(V)
-probe(d)   = bytes = jpeg(V, d, 4:2:0); s = score(decode(bytes), refV)
-d1         = exp(inv(T + M0 − BIAS))
-loop (≤ MAX_FULL probes):
-  if any passing probe p with s_p − T < STOP: break
-  bias = s_last − s_m(ln d_last); ld = inv(T + M1 − bias)
-  clamp ld into (ln max(passing d) + 0.003, ln min(failing d) − 0.003); if outside the bracket, use the bracket midpoint
-  if bracket width < 0.01: break
+x          = ln d, on a 1e-4 grid (solver and probes use identical distances → deterministic)
+m(x)       = score(decode(jpeg_proxy(M, d, tuned)), ref(M)), cached; 3 seeds at prior(T)·{0.8, 1, 1.25}
+             the first mosaic encode per chroma also fixes the AC scan script of every full probe (same coefficients)
+probe(d)   = bytes = jpeg(V, d, tuned, chosen script, final markers); s = score(decode(bytes), refV)
+bias(x)    = −1.1 before any probe; one side known: b_ref − 0.6·(x − x_ref) from the probe closest to T;
+             passing P and failing F: linear between b_P and b_F; with b_k = s_k − m(x_k)
+solve(g)   = largest x in [lo, hi] with m(x) + bias(x) ≥ g (bracket from cached mosaic points, regula falsi)
+probe 1    : solve(T + 0)
+loop       : while probes < MAX_FULL: stop if a passing probe has s − T < 0.15;
+             lo = max passing x + 0.003, hi = min failing x − 0.003; stop if lo > hi; probe solve(T + 0.03)
 result     = smallest-bytes passing probe
-rescue     : if none passed → up to RESCUE probes at d ← min(failing d) · 0.8 (not below D_MIN)
-fail-open  : if still none → repeat the whole search with 4:4:4
-keep-orig  : if sourceIsJPEG && colour == .keepProfile && (no pass || best.bytes ≥ 0.95 · B_src) → deliver original bytes (metadata policy applied losslessly, §3.7), status .keptOriginal
+rescue     : none passed → first rescue at solve(T + 0.3) below the smallest failing x, then d × 0.8 (≥ D_MIN), ≤ RESCUE
+fail-open  : still none → the whole search again with 4:4:4
+keep-orig  : sourceIsJPEG && colour == .keepProfile && (no pass || best.bytes ≥ 0.95 · B_src) → original bytes
+             (metadata policy applied losslessly, §3.7), status .keptOriginal
+guard      : (D-ENG-12, decoderGuard covers the result's chroma) the probes above are scored by ImageIO only; the
+             result is decoded again like libjpeg-turbo and scored, s = min of the two; s < T → the next-smallest
+             passing probe the same way; none → the whole search again with every passing probe guarded
+high mode  : (D-ENG-13) full-size JPEG at a fixed floor T ≥ 85 (not Balanced): the loop above with
+             JPEGTuning.highTarget (AQ off), prior 0.39·e^{0.164(90−T)} (4:2:0) / 0.50·e^{0.152(90−T)} (4:4:4),
+             bias prior −0.3, D_MIN 0.3; from T 89 also 4:4:4 unless the mosaic predicts > 3 % more bytes than the
+             passing 4:2:0 point (bias of that probe carried over); smallest passing probe of both; the tuned search
+             runs only if the high mode reaches nothing; the guard (above) applies to its result as to any other
 non-JPEG source and no pass → status .failed(.qualityUnreachable)   // practically unreachable; must be logged
 ```
 
 Small images (no mosaic, i.e. under 2048×1024) use `DirectSearch` (§3.5) with JPEG.
 
-**[S] expectation** on the 19-photo holdout: about 2.0 full probes per photo, at most 3, total bytes within ±1 % of the old engine at equal targets.
+**[M] as built** (holdout, release, D-ENG-11): 48,365,625 bytes for 19 photos at 1.84 full probes mean, max 3, every
+photo ≥ target (G1 limit 50,301,670, D-ENG-1). Cost per aimed probe ≤ 6 mosaic evaluations (~0.03 s each on 2 MP).
+*[M] r2* (holdout, release, D-ENG-14): Couple unchanged; High 98,776,135 B (−3.39 %, 1.74 probes), Highest 182,463,652 B
+(−4.72 %, 2.74 probes); every file ≥ T under ImageIO and libjpeg-turbo.
 
 ### 3.5 Resized deliveries (`DirectSearch`)
 
 - **Reference:** the resized (and possibly sRGB-converted) variant V. This is exactly what Compare shows as "original".
-- **Parameters:**
-  - JPEG: distance d, starting at `prior(T)`.
-  - WebP: quality q ∈ [0, 100], starting at `qPrior(T) = 75` for T = 70 (WP2 fits a line on the holdout).
-- **Search:** a secant step on score vs. parameter, with bracket bookkeeping as in §3.4.
-  - Stop at the first passing probe with s − T < 1.0, or after 5 probes.
+- **Parameters** (axis on which the score falls; values within one quantum of a range end snap to it):
+  - JPEG: x = ln d ∈ [ln 0.5, ln 25], quantum 0.001, start `prior(T)`, default slope −10 per ln d, max step 1.0.
+  - WebP: x = −q, q ∈ [0, 100], quantum 1, start `qPrior(T) = clamp(80 + 1.1·(T − 70), 5…100)` (fitted on the
+    holdout, D-ENG-5), default slope +0.5 per q, max step 30.
+- **Search:** a secant step on the two latest probes, aimed at T + stop/2, clamped into the passing/failing bracket
+  (midpoint when outside; stop when the bracket is one quantum wide).
+  - Stop at the first passing probe with s − T < stop — WebP 1.0, **JPEG 0.5** (D-ENG-8) — or after 5 probes.
   - Result: the smallest-bytes passing probe.
-- **WebP encoding:** `WebPConfigPreset(WEBP_PRESET_PHOTO)`, `method = 4`, `use_sharp_yuv = 1`, `thread_level = 0`. The sharp-YUV conversion is done **once** per (photo, delivery) and copied per probe (fixes old audit #19).
+- **JPEG order** (`JPEGTuning.resized`, D-ENG-11): T ≥ 80 → 4:4:4 from the prior, then 4:4:4 at d = 0.5 (no 4:2:0);
+  below 80 → 4:2:0, then 4:2:0 at d = 0.5, then 4:4:4 from d = 0.5. Small full-size images also apply keep-original.
+- **JPEG post-pass** (D-ENG-11): the result is rewritten with the per-component scan script estimated from its
+  coefficients (kept only if ImageIO decodes it to identical pixels), then up to 4 rewrites that zero isolated ±1 AC
+  coefficients (bisection over the zigzag start) are each scored; the smallest passing one is delivered. The
+  re-scores count as probes.
+- **Decoder guard** (D-ENG-12, `SearchConstants.decoderGuard`, default `.all`): every JPEG probe or rewrite that
+  passes under ImageIO is scored again on libjpeg-turbo's pixels; its score is the lower of the two. (Full-size
+  searches, §3.4, guard the candidate about to be delivered and fall back to the next passing probe, then to a fully
+  guarded search.)
+- **WebP encoding:** `WebPConfigPreset(WEBP_PRESET_PHOTO)` with `method = 6`, filter strength 40, sharpness 7
+  (`WebPTuning.default`, D-ENG-11; was method 4 and the preset's filter), `use_sharp_yuv = 1`, `thread_level = 0`. The
+  sharp-YUV conversion is done **once** per (photo, delivery) and copied per probe (fixes old audit #19).
 - **WebP fallback:** if WebP at q = 100 does not reach T, the delivery falls back to JPEG with the same size and the same search. The encoder is recorded as `jpegli (fallback)`, and the file gets a `.jpg` extension.
 - **JPEG failure:** if JPEG at d = 0.5 with 4:4:4 still misses T, the status is `.failed(.qualityUnreachable)`.
 
@@ -1192,7 +1234,9 @@ Small images (no mosaic, i.e. under 2048×1024) use `DirectSearch` (§3.5) with 
 
 - **Scope:** only JPEG sources that are Huffman-coded, baseline or progressive.
   - Non-JPEG, arithmetic-coded or unusual sources: the original bytes are copied (status `.keptOriginal`, encoder `copy`).
-- **Encode:** `JxlEncoderAddJPEGFrame` with `JxlEncoderStoreJPEGMetadata(enc, JXL_TRUE)`, effort 7, one thread per photo.
+- **Encode:** `JxlEncoderAddJPEGFrame` with `JxlEncoderStoreJPEGMetadata(enc, JXL_TRUE)`, effort 7. *As built
+  (D-ENG-11):* up to 4 threads per call (`hmb_jxl_*_threads`); libjxl's output does not depend on the thread count
+  (535/535 wedding archives identical). At most `MemoryPlan.archiveLanes` archives run at once (§3.9).
 - **Verification is mandatory for every file:** `reconstructJPEG(jxl)` must be byte-identical (SHA-256) to the source bytes.
   - If it is not, the `.jxl` is discarded, the original is copied, a failure is logged, and the status is `.keptOriginal`.
 - The result is recorded as `PhotoResult.byteExact = true`.
@@ -1212,13 +1256,13 @@ Small images (no mosaic, i.e. under 2048×1024) use `DirectSearch` (§3.5) with 
 | Policy | EXIF | XMP | IPTC (APP13) | ICC |
 |---|---|---|---|---|
 | keepAll | verbatim | verbatim | verbatim | verbatim (or sRGB if converted) |
-| removeLocation | drop GPS IFD (tag 0x8825), BodySerialNumber 0xA431, LensSerialNumber 0xA435, MakerNote 0x927C | drop `exif:GPS*`, `aux:SerialNumber`, `aux:LensSerialNumber`, `exifEX:BodySerialNumber` | verbatim | as keepAll |
-| removeAll | new minimal EXIF: Orientation, Artist, Copyright | only `dc:rights`, `dc:creator` | dropped | as keepAll |
+| removeLocation | drop GPS IFD (tag 0x8825), BodySerialNumber 0xA431, LensSerialNumber 0xA435, MakerNote 0x927C, SubIFDs; *as built (D-ENG-8):* also IFD1 and its thumbnail | drop `exif:GPS*`, `aux:SerialNumber`, `aux:LensSerialNumber`, `exifEX:BodySerialNumber`; *as built (D-ENG-11):* written without layout whitespace when CGImageMetadata reads the same tags back | verbatim, *as built (D-ENG-8):* except the preview resources 0x0409/0x040C | as keepAll |
+| removeAll | new minimal EXIF: Orientation, Artist, Copyright | only `dc:rights`, `dc:creator` (without layout whitespace) | dropped | as keepAll |
 
 **Container placement:**
 - JPEG outputs: the ordered markers are APP1 Exif, APP1 XMP, APP2 ICC chain, APP13, then `COM "holdmybyte 2.0"`.
 - WebP outputs: VP8X with ICCP / EXIF / XMP chunks, via libwebpmux.
-- Keep-original copies under a non-keepAll policy are rewritten **losslessly**: the JPEG entropy data is copied byte for byte and only the segments are replaced. A test proves the decoded pixels are identical.
+- Keep-original copies under a non-keepAll policy are rewritten **losslessly**: the JPEG entropy data is copied byte for byte and only the segments are replaced. A test proves the decoded pixels are identical. Data after EOI (MPF/CIPA previews with their own unfiltered EXIF) and the APP2 MPF index are dropped under these policies.
 
 ### 3.8 Scanning, jobs, writing, resume
 
@@ -1262,7 +1306,7 @@ Small images (no mosaic, i.e. under 2048×1024) use `DirectSearch` (§3.5) with 
 | read failure while the source volume is unmounted | `.paused(.sourceUnavailable(volume))` |
 | read failure while the volume is present | that photo `.failed(.unreadable)` |
 
-**Determinism:** the same inputs, settings and engine build produce byte-identical outputs. Encoders run single-threaded per image, there is no randomness, and there is no time-dependent state.
+**Determinism:** the same inputs, settings and engine build produce byte-identical outputs. JPEG and WebP encoders run single-threaded per image; libjxl runs on up to 4 threads with thread-count-independent output; there is no randomness and no time-dependent state. The codec archive itself is reproducible (§3.13).
 
 **Events:** results are coalesced and emitted at most 10× per second. `JobProgress` is emitted at least once per second while running.
 
@@ -1273,10 +1317,20 @@ Small images (no mosaic, i.e. under 2048×1024) use `DirectSearch` (§3.5) with 
   - `.automatic` = clamp(activeProcessorCount − 2, 2…8), QoS `.userInitiated`.
   - `.gentle` = 2, QoS `.utility`.
 - **One `MetricLane`:**
-  - It serialises all GPU work on one `MTLCommandQueue`. Workers block on it from their own thread.
-  - At most 3 live full-resolution `MetricReference`s exist at once (counting semaphore). This caps GPU memory, since one 45 MP reference is about 1.6 GB.
-- **Archive** jobs run on the same workers. A photo whose lossy deliveries are done can start its archive while its references are already released.
-- **Memory budget [B]:** peak RSS ≤ 8 GB at 8 workers on 45 MP input.
+  - It serialises full-resolution GPU work on one `MTLCommandQueue`; workers block on it from their own thread. *As
+    built (D-ENG-11):* mosaic and ≤ 3 MP scores run outside the lane lock on pooled per-caller working sets.
+  - *As built (D-ENG-10):* references above 3 MP are **deferred**: the handle keeps the caller's pixels and each
+    score rebuilds the GPU pyramid inside the lane (bit-identical scores, ~35 ms per 45 MP score); Metal pools are
+    keyed orientation-free with a 2 GB LRU. Full-size searches take a slot (count from the memory plan, else 3), and at
+    most 2 full-size decodes run at once.
+- **Archive** jobs run on the same workers. *As built (D-ENG-10):* a photo's archive is its own work item, at most
+  `MemoryPlan.archiveLanes` at once while lossy work is queued.
+- **Memory plan (D-ENG-10):** a per-pixel model of the largest photo (base 0.3 GB, metric pools 32 B/px, archive
+  30 B/px, lossy worker 6 B/px + 6 B/px per full-size search) against min(8 GB, RAM/2) sets workers, archive lanes and
+  full-size slots (45 MP, 8 processor workers → 7 workers, 3 lanes). Large buffers come from mappings and per-call
+  arenas, not malloc; `hmb` and the app run with `MallocLargeCache=0`.
+- **Memory budget [B]:** peak RSS ≤ 8 GB at 8 workers on 45 MP input. *[M] as built:* wedding, all four, 7.18 GB RSS /
+  7.42 GB footprint (D-ENG-10); Couple-only jobs 5.2–6.0 GB footprint (D-ENG-11).
 
 ### 3.10 Estimates
 
@@ -1286,13 +1340,13 @@ Small images (no mosaic, i.e. under 2048×1024) use `DirectSearch` (§3.5) with 
 
 | Delivery kind | Estimate |
 |---|---|
-| Full-size lossy | Proxy curve only (no full probes): d* = exp(inv(T + M0 − BIAS)), then the mosaic is encoded at d*. Estimate = mosaicBytes × (W·H / mosaicPixels) × κ_full. |
-| Resized lossy | Real resize plus one probe at the prior parameter. Estimate = probe bytes × κ_resized. |
+| Full-size lossy | Proxy curve only (no full probes): d* = exp(inv(G)), then the mosaic is encoded at d* (tuned, level 2). Estimate = mosaicBytes × (W·H / mosaicPixels) × κ_full + marker bytes. *As built:* G = T + 0.03 − (−1.1) = T + 1.13 for `.mosaicExact` (T + M0 − BIAS for `.proxyCurve`). Full-size WebP: the mosaic at qPrior. |
+| Resized lossy | *As built (D-ENG-4):* the delivery's **real DirectSearch** on the sample's variant (WebP with its JPEG fallback, JPEG with the 4:4:4-first rule and the decoder guard); the post-pass is not modelled. Estimate = best passing bytes × κ_resized. (Was: one probe at the prior, which missed by 30–45 %.) |
 | Archive | 0.78 × JPEG source bytes + 1.0 × other source bytes. |
 
 - **Totals** are scaled by n/S. The result is `DeliveryEstimate(bytes:, fractionOfSource:, secondsPerPhoto:)`.
 - **κ:**
-  - κ starts as constants fitted by WP2 on the holdout (median actual/estimate) and recorded in `Docs/ENGINE.md`.
+  - κ starts as constants fitted by WP2 on the holdout (median actual/estimate) and recorded in `Docs/ENGINE.md`. *As built:* all κ defaults are 1.0 (holdout actual/estimate 0.998–1.010).
   - After every finished job, the ratio of actual to estimated bytes per delivery kind is folded into a learned κ with an exponential moving average (α = 0.3), stored in UserDefaults. "Reset Learned Estimates" clears it.
 - **Time:** `secondsPerPhoto` comes from the per-delivery-kind EMA of measured wall seconds per photo on this Mac. The defaults are the budgets in §3.11.
 - **[B]:** ≤ 5 s for the default deliveries on 45 MP input, and the totals must be within ±15 % of actual (gate G7).
@@ -1329,7 +1383,7 @@ Honest framing:
 ### 3.12 Guarantees (each one has a test; see WP2 and WP1)
 
 1. **Originals are never opened for writing.** The only write path is `OutputWriter`, and it refuses source files, source roots and anything below them.
-2. **Lossy deliveries.** Every lossy file has `score ≥ target`, measured by the engine's metric on the decoded **delivered bytes** against the (resized or converted) source variant. The score is stored per file.
+2. **Lossy deliveries.** Every lossy file has `score ≥ target`, measured by the engine's metric on the decoded **delivered bytes** against the (resized or converted) source variant. The score is stored per file. *As built (D-ENG-12):* "decoded" means ImageIO and, for JPEGs, also libjpeg-turbo's pixels (browsers); the stored score is the lower reading. ImageIO's WebP pixels are libwebp's (`DecoderAuditTests`).
 3. **Full-size JPEG deliveries are complete.** A photo is missing only on read, encode or write errors, which are listed. When compression can't win, the original is kept.
 4. **The archive is byte-exact.** Every `.jxl` reconstructs to the identical source bytes (verified for each file before it is counted).
 5. **Determinism:** byte-identical outputs on reruns.
@@ -1369,15 +1423,19 @@ cmake -S "$WORK/libwebp" -B "$WORK/webp-build" "${COMMON[@]}" -DWEBP_BUILD_ANIM_
       -DWEBP_BUILD_DWEBP=OFF -DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF
       -DWEBP_BUILD_WEBPINFO=OFF -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF -DWEBP_USE_THREAD=ON
 cmake --build "$WORK/webp-build"
+# as built: Vendor/patches/<lib>/*.patch are applied (idempotent; each keeps the codec's output byte-identical)
 libtool -static -o "$WORK/libhmbcodecs.a" <every .a listed in Scripts/codec-libs.txt, resolved under the two build dirs>
+# as built (D-ENG-12): ZERO_AR_DATE=1, then every ar member header normalised to uid 0, gid 0, mode 100644 (libtool
+# copies the user, the build directory's group and the umask into them), so any checkout builds the locked bytes
 # audits (fail the script): no exported _jpeg_* symbols; no /opt/homebrew or /usr/local in any load command or string table
 nm -gU "$WORK/libhmbcodecs.a" | grep -E ' _jpeg_' && die "libjpeg API exported"
+# as built: SHA-256 ≠ OUTPUT_SHA256 → fail, install nothing (unless --update-lock, the only way the lock changes)
 rm -rf "$ROOT/Vendor/xcframeworks/HMBCodecs.xcframework"
 xcodebuild -create-xcframework -library "$WORK/libhmbcodecs.a" -output "$ROOT/Vendor/xcframeworks/HMBCodecs.xcframework"
 # headers listed in Scripts/codec-headers.txt (jxl/*.h incl. generated jxl/version.h + export headers, lib/jpegli/{common,encode,types}.h
 # with their include layout preserved, jpeglib.h/jmorecfg.h/jconfig.h from the jxl build tree, webp/{encode,mux,mux_types,types,decode}.h)
 copy_headers "$ROOT/Sources/CHMBCodecs/vendor-include"
-write_lock_sha
+finish   # installed SHA-256 == built; with --update-lock, write OUTPUT_SHA256
 ```
 
 **How SwiftPM consumes this without `unsafeFlags`:**
@@ -1416,6 +1474,11 @@ int  hmb_jxl_transcode_jpeg(const uint8_t *jpeg, size_t size, int effort, hmb_bu
 int  hmb_jxl_reconstruct_jpeg(const uint8_t *jxl, size_t size, hmb_buffer *out, char *err, size_t err_len);
 const char *hmb_codec_versions(void);   // "libjxl 0.11.2 · jpegli (libjxl 0.11.2) · libwebp 1.6.0"
 ```
+
+*As built (additive):* `hmb_jpegli_encode_opts` (tuned tables, sampling, AQ, proxy script, scan choice),
+`hmb_jpegli_encode_scans`, `hmb_jpeg_optimize_scans`, `hmb_jpeg_choose_scans`, `hmb_jpeg_rewrite` (D-ENG-11),
+`hmb_webp_encode_tuned`, `hmb_jxl_*_threads` (D-ENG-11), `hmb_jpeg_decode_islow` (D-ENG-12). The frozen calls are
+byte-identical wrappers.
 
 ---
 ## 4. Repository layout

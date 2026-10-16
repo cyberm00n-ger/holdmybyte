@@ -316,3 +316,98 @@ was −15 % on the holdout with libjpeg-turbo; try it in jpegli (`jpegli_use_sta
 progressive 4:4:4 up to 1.6 lower than baseline; our candidates are always progressive, so ImageIO stays the low
 reading and D-ENG-2 holds for the 4:4:4 Social files). Detecting JPEGmini-marked sources (research rank 3) is a
 product decision.
+
+## D-ENG-12 · 2026-10-16 · Decoder guard (libjpeg-turbo's pixels in process, lower score counts) and a reproducible codec lock (branch `eng-safety`)
+
+**Decision.** (1) `IslowDecoder` (`hmb_jpeg_decode_islow`) decodes a JPEG to exactly libjpeg-turbo's default pixels
+(ISLOW IDCT, fancy upsampling, `jdcolor.c` tables; jpegli reads the coefficients), pixel-identical to `djpeg` on 504
+synthetic encodes and the 6 samples. (2) `SearchConstants.decoderGuard` = `.all` (default): a JPEG candidate that
+passes under ImageIO is also scored on those pixels against the same reference, and the lower score is its score
+(search, post-pass, journal, receipt). Resized searches guard every passing probe; full-size searches guard the
+candidate about to be delivered (next-smallest passing probe if it fails, a fully guarded search if none passes).
+`.chroma444` and `.off` (= eng-v3 byte for byte) stay selectable (`HMB_DECODER_GUARD`). (3) `Scripts/build-codecs.sh`
+normalises the archive's ar member headers (date 0, uid/gid 0, mode 100644), fails on a lock mismatch and installs
+nothing; `--update-lock` is the only way to re-pin. Lock re-pinned 3e81407d → 6e8cf4a9 (same members).
+
+**Why.** Audit of main's outputs (`DecoderAuditTests`, Docs/variants/safety.md §3): libjpeg-turbo (Chrome, Firefox,
+Edge) read 2/19 holdout and 59/535 wedding Social files (4:4:4) below 85 (min −0.153) and 3/535 wedding Couple files
+(4:2:0) below 74 (min −0.015). ImageIO's WebP pixels are libwebp's (19/19 identical). With the guard (`.chroma444`)
+the wedding's Social files are 535/535 ≥ 85 under both decoders at +0.062 % Social bytes; the holdout changed one
+Social file (−0.006 %). The codec lock had depended on the build user's group and umask (eng-v3 verification §5).
+
+**Rejected.** A guard band (+0.16…0.2 on every target, ≈ 2 % of Social's bytes, still no guarantee). Guarding every
+full-size probe (+15 % CPU on the holdout's three-delivery job for no changed byte there). `.chroma444` as default:
+it leaves the 4:2:0 cases of the wedding open.
+
+**Risks accepted.** Viewers that trade accuracy for speed (IFAST, `-nosmooth`, ffmpeg's swscale default) read the
+original itself 2–13 points below the reference and are not certified. Lightroom's and Windows' decoders were not
+measured. The "same" pairing (source and file both decoded by libjpeg-turbo) can stay up to 0.33 below T: that is the
+two decodes of the Lightroom original differing, not the compression.
+
+## D-ENG-13 · 2026-10-16 · High-target mode: jpegli without adaptive quantisation at fixed floors ≥ 85; Annex K and baseline not adopted (branch `eng-highest`)
+
+**Decision** (answers D-ENG-11's research recommendation 1). Full-size JPEG deliveries with a fixed floor of 85 or more (High, Highest; not Balanced) are searched in
+a high-target mode: `JPEGTuning.highTarget` = `fullSize`'s table shape with adaptive quantisation **off**, progressive,
+4:2:0 and — from T 89 — also 4:4:4 (mosaic-preselected), the smaller verified result delivered; the tuned search runs
+only when the high mode reaches nothing. A compare band (tuned and high, smaller verified) exists
+(`highCompareFrom..<highFirstFrom`) but is empty by default. The jpegli bridge gains Annex K tables
+(`standard_tables`) and sequential coding (`JPEGKnobs.sequential`); neither is used by default. Evidence and every run:
+`Docs/variants/highest.md`; how it works: Docs/ENGINE.md §3.2.
+
+**Why.** Holdout, release, back to back with main 66e3db0: Highest 191,497,771 → 182,337,941 B (−4.78 %), probes
+2.26 → 2.74, ImageIO min 90.019 → 90.011, libjpeg-turbo min 89.81 → 89.82; High 102,245,961 → 98,776,135 B (−3.39 %),
+probes 2.00 → 1.74. Couple, Website, Social, Archive 76/76 SHA-256-identical; `HMB_HIGH=off` reproduces main's Highest
+and High byte for byte. Wedding Highest: not measured (resource limit). Highest is now below JPEGmini's bytes on the
+holdout (182.3 vs 191.0 MB) with every file ≥ 90 on both decoders, where JPEGmini's files read 79.1–91.5.
+
+**Rejected, with measurements.** (a) **Annex K tables** (research rank 1): in jpegli they lose to jpegli's own tuned
+shape in every mode (4:4:4 AQ off progressive +3.1 % vs main; real pipeline `HMB_HIGH_TABLES=annexk` +3.7 %). At
+identical Annex K tables libjpeg-turbo's encoder is 3–5 % better per byte than jpegli's on this material (integer DCT,
+not the dead zone: a plain-rounding jpegli patch gained ≤ 0.6 % and was dropped, codec pin unchanged). A second encoder
+is not justified: jpegli's best settings (181.5 MB progressive, 174.2 MB baseline, frontier) already meet libjpeg-turbo
+Annex K's 176.3 MB (research F1) on the same gate. (b) **Baseline coding** (−8.6 % more, 175.0 MB): ImageIO reads
+baseline 4:4:4 files 0.35–0.82 above libjpeg-turbo and above an exact float IDCT (which agree within 0.05); every
+baseline Highest file is below 90 for those decoders (89.22–89.80). That contradicts D-ENG-2's premise (ImageIO is the
+low reading); progressive keeps the two decoders as close as main's files (turbo − ImageIO −0.21…+0.25). Kept as
+`HMB_HIGH_SCAN=baseline` for an owner decision. (c) Compare band at 85: −2.6 KB for +2 probes per photo.
+
+**Deviations from SPEC §3 (binding text unchanged; this entry is the record).** E1 "adaptive quantisation on" no longer
+holds for full-size JPEG at fixed floors ≥ 85. E2 "4:4:4 only as fail-open" no longer holds at full size from T 89 in
+the high mode (both searched, mosaic-preselected). §3.4's search order (4:2:0 → rescue → 4:4:4) applies to the tuned
+search; the high mode has its own priors (`Targets.highPrior`), bias prior (−0.3) and rescue floor (d 0.3).
+
+**Risks accepted.** Tuned on 19 photos of one camera with the metric that judges it (no new table shape was fitted:
+`fullSize`'s, only AQ off). Highest costs +24 % wall / +30 % CPU on the holdout (more probes, finer distances, the
+4:4:4 preselection's mosaic encodes). The estimator under-reads the high mode by 3–4 % (κ 1.0 kept). Resized
+deliveries (DirectSearch) are unchanged; they already run 4:4:4 without AQ from T 80.
+
+**Open (owner).** Baseline for Highest (above), possibly with jpegli's decoder as a second in-engine reading; AQ off for
+Balanced (not tested; Couple stays byte-identical by construction).
+
+## D-ENG-14 · 2026-10-16 · Engine r2: decoder guard `.all` over the high-target mode (engine integrator, branch `eng-r2`)
+
+**Decision.** `eng-safety` (D-ENG-12) and `eng-highest` (D-ENG-13) are merged as they are, with one integration rule:
+the high mode's oracle runs inside the full-size search that the decoder guard wraps, so every full-size result —
+tuned or high mode, 4:2:0 or 4:4:4 — is checked on libjpeg-turbo's pixels before delivery. The guard's default stays
+`.all`. The guard's second decoder moved into the primitives
+(`EnginePrimitives.viewerDecoder`, live = `IslowDecoder`, fakes = none): with `.all` the fake engine's 4:2:0
+"JPEGs" reached `IslowDecoder` and failed the fake-based job tests. Codecs rebuilt in the new worktree with the normalised script: archive 6e8cf4a9, equal to the lock (third
+independent directory).
+
+**Why.** Holdout, release, all six deliveries, back to back with main (Docs/BENCHMARKS.md "Engine r2"): lossy bytes
+352,985,038 → 340,480,778 (−3.54 %; High −3.39 %, Highest −4.72 %; Couple, Website, Archive byte-identical; Social
+−315 B). Every JPEG ≥ target under ImageIO and under libjpeg-turbo (main: 2 Social and 1 Highest file below under
+libjpeg-turbo). The question whether high-mode 4:2:0 needs the guard was measured, not assumed: at 85/90 without AQ,
+libjpeg-turbo reads 4:2:0 files up to 0.075 below ImageIO (High 7/19, Highest 3–4 of 14–15 negative), and with
+`.chroma444` one Highest 4:2:0 file reads 89.998. `.all` fixes it for +0.07 % Highest bytes. Two r2 runs
+SHA-256-identical.
+
+**Cost accepted.** +13 % CPU / +22 % wall on the six-delivery holdout job under load 5–8; about 28 s of the +34 s
+CPU are the full-size guard decodes (one 45 MP libjpeg-turbo decode and score per full-size file), the rest the high
+mode's extra probes. No speed claim is made against JPEGmini. Not measured: the wedding with r2 (resource limit, no
+full-wedding runs after the session crash); its D-ENG-12 audit stands (main: 3 Couple / 59 Social files below under
+libjpeg-turbo).
+
+**Open (owner).** Baseline coding for Highest (D-ENG-13) would now be guarded too: the guard would reject most
+baseline files (libjpeg-turbo 89.2–89.8), so `HMB_HIGH_SCAN=baseline` under `.all` cannot reproduce the −8.6 %.
+`.chroma444` (−10 % CPU, one Highest file below under libjpeg-turbo on the holdout) is a switch if speed matters more.

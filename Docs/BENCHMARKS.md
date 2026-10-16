@@ -236,3 +236,41 @@ timing gates not evaluated (load > 3). The eng-v3 run had the higher load; under
 −14 % wall on this job, and the post-pass's extra CPU (WebP method 6, Social re-scores) takes most of that back on four
 deliveries, while Couple alone keeps the speed gain. G9: `shasum -a 256` of all 535 sources before the first and after
 the last run identical to `runs/wedding-sha256-before.txt` (`runs/eng-v3-wedding-sha256-{before,after}.txt`).
+
+## Engine r2 (2026-10-16, branch `eng-r2` = eng-safety + eng-highest, D-ENG-12…14)
+
+Release `hmb compress` of the 19 holdout photos with all six deliveries in one job (`--workers 4`), under
+`/usr/bin/time -l`; main 66e3db0 built in a separate worktree, run back to back A/B/B/A (main, r2, r2, main), then one
+r2 run with `HMB_DECODER_GUARD=chroma444`. MacBookPro18,4 shared with other agents, 1-minute load 5.3–8.3 (3.3–5.3 for
+the `.chroma444` run): no timing gate is evaluated. "islow" = the delivered file decoded like libjpeg-turbo
+(`IslowDecoder`, = `djpeg`; Chrome, Firefox, Edge) scored against the engine's reference (`DecoderAuditTests`,
+`HMB_DECODER_AUDIT_FAST=1`). Outputs deleted after hashing and scoring; no wedding run (resource limit).
+
+| Delivery | main bytes | **r2 bytes** | Δ | ImageIO min / median, main → r2 | islow min / median, main → r2 | below T under islow, main → r2 | probes main → r2 |
+|---|---|---|---|---|---|---|---|
+| Couple (74, 4:2:0) | 48,365,625 | 48,365,625 | identical (19/19 SHA-256) | 74.020 / 74.090 → same | 74.134 / 74.295 → same | 0 → 0 | 1.84 → 1.84 |
+| Website (70, WebP) | 5,555,974 | 5,555,974 | identical | 70.034 / 70.673 → same | n/a (ImageIO = libwebp pixels) | — | 2.79 → 2.79 |
+| Social (85, 4:4:4) | 5,319,707 | 5,319,392 | −0.006 % (7 files changed) | 85.002 / 85.024 → 85.005 / 85.024 | 84.847 / 85.042 → 85.008 / 85.054 | **2 → 0** | 6.63 → 6.63 |
+| Archive (JPEG XL) | 312,351,208 | 312,351,208 | identical, 19/19 byte-exact | — | — | — | — |
+| High (85, full) | 102,245,961 | **98,776,135** | **−3.39 %** | 85.014 / 85.082 → 85.004 / 85.081 | 85.028 / 85.131 → 85.013 / 85.121 | 0 → 0 | 2.00 → 1.74 |
+| Highest (90, full) | 191,497,771 | **182,463,652** | **−4.72 %** | 90.019 / 90.080 → 90.011 / 90.075 | 89.984 / 90.129 → 90.017 / 90.090 | **1 → 0** | 2.26 → 2.74 |
+| Lossy total | 352,985,038 | 340,480,778 | −3.54 % | | | | |
+
+| Run | Wall | CPU | Peak footprint / RSS | Load before → after |
+|---|---|---|---|---|
+| main 1 / 2 | 68.6 / 65.3 s | 255.7 / 253.1 s | 5.11 / 5.09 GB, 3.45 / 3.44 GB | 6.8 → 7.7 / 6.8 → 8.3 |
+| **r2 1 / 2** | 80.3 / 82.4 s (+22 %) | 285.9 / 290.0 s (+13 %) | 5.21 / 5.33 GB, 3.59 / 3.70 GB | 7.5 → 6.3 / 5.3 → 7.2 |
+| r2, guard `.chroma444` | 71.4 s | 259.7 s | 5.29 / 3.63 GB | 3.3 → 5.3 |
+
+Uptime at the runs: 24 days 3:58–4:10 (20:34–20:46). r2's two runs are SHA-256-identical (114/114 files), main's two
+as well. Every delivered file of r2 reaches its target under ImageIO, and every JPEG also under islow; on main, 2 Social
+files and 1 Highest file (0042, 4:2:0, 89.984) do not.
+
+**Highest / High under libjpeg-turbo, per file (islow, mixed pairing).** High, all 4:2:0: main 85.03–85.25, r2
+85.01–85.43; islow − ImageIO −0.042…+0.210 (7 of 19 negative). Highest r2, 14 × 4:2:0: 90.02–90.30, gap −0.075…+0.236
+(3 negative); 5 × 4:4:4: 90.15–90.25, gap −0.031…+0.232. The 4:2:0 high-mode files are therefore not always read
+higher by libjpeg-turbo, unlike Couple (gap ≥ +0.020): with `.chroma444` (guard only for 4:4:4) photo 0126's Highest
+file is 4:2:0, ImageIO 90.047, islow **89.998**; under the default `.all` it is replaced by a 4:4:4 file
+(9,535,781 → 9,661,492 B, guarded score 90.150). That is the whole Highest difference between the two modes
+(182,337,941 → 182,463,652 B, +0.07 %). The guard costs about 28 s CPU on this job (57 full-size guard decodes and
+scores); `.chroma444` remains a switch.

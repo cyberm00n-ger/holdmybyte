@@ -12,6 +12,7 @@ extension EnginePrimitives {
             throw PrimitiveError("Metal SSIMULACRA2 is unavailable")
         }
         return EnginePrimitives(decoder: ImageIODecoder(), processing: VImageProcessing(), jpeg: JpegliEncoder(),
-                                webp: LibWebPEncoder(tuning: webpTuning), jxl: LibJXLTranscoder(), metric: metric)
+                                webp: LibWebPEncoder(tuning: webpTuning), jxl: LibJXLTranscoder(), metric: metric,
+                                viewerDecoder: { try IslowDecoder.decode($0, width: $1, height: $2, colorSpace: $3) })
     }
 }

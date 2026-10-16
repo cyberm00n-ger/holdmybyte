@@ -159,10 +159,10 @@ struct Estimator: Sendable {
 
     /// The mosaic score the full-size estimate aims at: what the search expects to deliver (T plus its margin), shifted
     /// by the expected full − mosaic bias.
-    static func mosaicGoal(target: Double, constants c: SearchConstants) -> Double {
+    static func mosaicGoal(target: Double, constants c: SearchConstants, biasPrior: Double? = nil) -> Double {
         switch c.aim {
         case .proxyCurve: target + c.m0 - c.bias
-        case .mosaicExact: target + c.exactMargin - c.exactBiasPrior
+        case .mosaicExact: target + c.exactMargin - (biasPrior ?? c.exactBiasPrior)
         }
     }
 
@@ -241,21 +241,36 @@ struct Estimator: Sendable {
                     bytes = Double(try p.webp.encode(prepared, quality: Float(Targets.webpPrior(target)), icc: nil, exif: nil, xmp: nil).count)
                         * scale * kappa + markerBytes
                 } else {
-                    let d = try lane.withReference(mosaic, cancel: cancel) { ref -> Double in
-                        var points: [(x: Double, s: Double)] = []
-                        for factor in [0.8, 1.0, 1.25] {
-                            try cancel.check()
-                            let d = Targets.jpegPrior(target) * factor
-                            let data = try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: .s420,
-                                                                   tuning: constants.jpegTuning)
-                            points.append((log(d), try lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: cancel)))
+                    // The tuned 4:2:0 search, and at fixed high floors the high-target mode (its own tables, prior and
+                    // bias; 4:4:4 too from `high444From`): the smallest of the modes the search would compare.
+                    let high = preset.quality == .balanced ? .off : constants.highMode(target: target)
+                    var modes: [(tuning: JPEGTuning, chroma: ChromaSubsampling, prior: Double, bias: Double)] = []
+                    if high != .first { modes.append((constants.jpegTuning, .s420, Targets.jpegPrior(target), constants.exactBiasPrior)) }
+                    if high != .off {
+                        modes.append((constants.highTuning, .s420, Targets.highPrior(target, chroma: .s420), constants.highBiasPrior))
+                        if target >= constants.high444From {
+                            modes.append((constants.highTuning, .s444, Targets.highPrior(target, chroma: .s444), constants.highBiasPrior))
                         }
-                        return exp(ProxyCurve(points: points).inverse(Self.mosaicGoal(target: target, constants: constants),
-                                                                      range: constants.lnDistanceRange))
                     }
-                    bytes = Double(try p.jpeg.encode(mosaic, distance: d, subsampling: .s420, tuning: constants.jpegTuning,
-                                                     markers: []).count)
-                        * scale * kappa + markerBytes
+                    bytes = .infinity
+                    for mode in modes {
+                        let d = try lane.withReference(mosaic, cancel: cancel) { ref -> Double in
+                            var points: [(x: Double, s: Double)] = []
+                            for factor in [0.8, 1.0, 1.25] {
+                                try cancel.check()
+                                let d = mode.prior * factor
+                                let data = try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: mode.chroma,
+                                                                       tuning: mode.tuning)
+                                points.append((log(d), try lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: cancel)))
+                            }
+                            return exp(ProxyCurve(points: points).inverse(
+                                Self.mosaicGoal(target: target, constants: constants, biasPrior: mode.bias),
+                                range: constants.lnDistanceRange))
+                        }
+                        bytes = min(bytes, Double(try p.jpeg.encode(mosaic, distance: d, subsampling: mode.chroma,
+                                                                    tuning: mode.tuning, markers: []).count))
+                    }
+                    bytes = bytes * scale * kappa + markerBytes
                 }
             } else {
                 // Resized (and small full-size) deliveries: the real DirectSearch on the sample's variant — a few probes
@@ -263,16 +278,23 @@ struct Estimator: Sendable {
                 // the floor at 1440/2560 px differs from the full-size prior, and some photos only reach a high floor
                 // with 4:4:4 (Docs/ENGINE.md §7).
                 bytes = try lane.withReference(v, cancel: cancel) { ref -> Double in
-                    func verify(_ data: Data) throws -> Double {
+                    func verify(_ data: Data, chroma: ChromaSubsampling? = nil) throws -> Double {
                         try cancel.check()
-                        return try lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: cancel)
+                        let (score, width, height, space) = try {
+                            let candidate = try p.decoder.decode(encoded: data)
+                            return (try lane.score(candidate, against: ref, cancel: cancel), candidate.width, candidate.height,
+                                    candidate.colorSpace)
+                        }()
+                        return try constants.decoderGuard.score(score, target: target, chroma: chroma, data: data, width: width,
+                                                                height: height, colorSpace: space, viewer: p.viewerDecoder, decode: { try $0() },
+                                                                score: { try lane.score($0, against: ref, cancel: cancel) })
                     }
                     let markers = MetadataEditor.jpegMarkers(meta)
                     func jpegSearch() throws -> Double? {
                         let result = try DirectSearch.jpeg(target: target, constants: constants) { d, chroma in
                             let data = try p.jpeg.encode(v, distance: d, subsampling: chroma, tuning: constants.directJPEGTuning,
                                                          markers: markers)
-                            return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
+                            return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data, chroma: chroma), data: data)
                         }
                         if case .encoded(let best) = result.outcome { return Double(best.bytes) }
                         return nil

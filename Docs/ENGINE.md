@@ -4,7 +4,9 @@ How the live engine turns a scanned wedding into verified deliveries. `Docs/SPEC
 documents how WP2 implemented it, the constants in use and what was validated. Since the integration pass
 (2026-10-15, branch `int-engine`) it also records the live fits and the search change of Docs/DECISIONS.md D-ENG-3…5.
 Since the engine integration of 2026-10-16 (branch `eng-v3`, D-ENG-11) it also records the speed changes, the tuned
-JPEG tables and the post-pass (§3.5, §8, §10).
+JPEG tables and the post-pass (§3.5, §8, §10). Since D-ENG-13 (branch `eng-highest`) full-size JPEG at fixed floors
+≥ 85 runs in a high-target mode (§3.2). Since D-ENG-12 every delivered JPEG is also scored on libjpeg-turbo's
+pixels and the lower score counts (decoder guard, §3.6); `eng-r2` (D-ENG-14) integrates both (§11).
 
 Code: `Sources/HMBEngine/{Search,Pipeline,Jobs,IO,Metadata,Estimate,Service}`.
 Tests: `Tests/HMBEngineTests/Pipeline` (fakes; live tests gated on `EnginePrimitives.live()` plus `HMB_HOLDOUT` /
@@ -33,6 +35,8 @@ Tests: `Tests/HMBEngineTests/Pipeline` (fakes; live tests gated on `EnginePrimit
 | Codec arenas (libjxl, jpegli working memory) | `CHMBCodecs/arena.cc` | §3.9 |
 | `Estimator`, `LearnedEstimates`, `DeliveryKind` | `Estimate/Estimator.swift` | §3.10 |
 | `JPEGTuning` (table shape per search), `JPEGKnobs`, `TunableJPEGEncoding` | `Search/SearchModel.swift`, `Codecs/JpegliEncoder.swift` | §3.4/§3.5, D-ENG-11 |
+| `DecoderGuard`, `IslowDecoder` (`hmb_jpeg_decode_islow`: libjpeg-turbo's pixels from jpegli's coefficients) | `Pipeline/DecoderGuard.swift`, `Codecs/IslowDecoder.swift`, `CHMBCodecs/jpegli.cc` | E6, D-ENG-12 |
+| High-target mode (`MosaicSearch.searchHigh`, `SearchConstants.highMode`, `Targets.highPrior`) | `Search/MosaicSearch.swift`, `Search/SearchModel.swift` | §3.4, D-ENG-13 |
 | `JPEGPostPass` (scan script, lossless rewrite, ±1 zeroing), `WebPTuning` | `Codecs/JPEGPostPass.swift`, `Codecs/LibWebPEncoder.swift` | §3.5, D-ENG-11 |
 | `XMPMinify`, `XMPLayout` | `Metadata/XMPMinify.swift` | §3.7, D-ENG-11 |
 | `Spans` (`HMB_SPANS`, wall time per pipeline span) | `Jobs/Spans.swift` | — |
@@ -118,6 +122,35 @@ full − mosaic bias unchanged at −1.03). The mosaic is encoded with the proxy
 same coefficients as level 2), and the first mosaic encode of each subsampling also picks the per-component AC scan
 script (`JPEGPostPass.chooseScans`) that every full probe of that subsampling is then encoded with — the delivered
 bytes are still exactly the scored bytes (E3).
+
+#### High-target mode (D-ENG-13, `Docs/variants/highest.md`)
+
+Full-size JPEG with a **fixed** floor (High 85, Highest 90; never Balanced, so Couple's Package is unchanged):
+
+```
+mode(T) : T < highCompareFrom (85)                 → tuned search only (everything above)
+          highCompareFrom ≤ T < highFirstFrom (85) → tuned and high mode, smaller verified result (empty by default)
+          T ≥ highFirstFrom (85)                   → high mode; the tuned search only if it reaches nothing
+high    : tables JPEGTuning.highTarget = fullSize shape (chroma × 0.65, tilt 1.6, DC × 0.8), adaptive quantisation OFF,
+          progressive (scan script per subsampling from its own first mosaic encode, as above)
+          4:2:0: the .mosaicExact loop with prior Targets.highPrior(T, 4:2:0) = 0.39·e^{0.164(90−T)},
+                 bias prior −0.3 (highBiasPrior), rescue floor d 0.3 (highDMin)
+          4:4:4: if 4:2:0 reached nothing, or T ≥ high444From (89) and the mosaic does not rule it out:
+                 b = s(best 4:2:0) − m420(d_best); solve the 4:4:4 mosaic for T + exactFirstMargin − b (start d_best·1.28,
+                 steps 0.08, bisection to 0.01, ≤ 8 evaluations); skip when mosaic bytes(4:4:4 there) >
+                 1.03 × mosaic bytes(4:2:0 at d_best) (high444Skip); else the .mosaicExact loop seeded at that point
+                 with bias prior b
+          result: smallest passing probe of both (every probe `highMode`, encoder "jpegli (high)")
+```
+
+Mosaic points are cached per (subsampling, distance) in the pipeline, so the preselection and the searches share
+encodes. Holdout (release, back to back with main 66e3db0): Highest 191,497,771 → 182,337,941 B (−4.78 %, probes 2.26 →
+2.74, 4 photos 4:4:4), High 102,245,961 → 98,776,135 B (−3.39 %, probes 2.00 → 1.74); every file ≥ the floor on ImageIO,
+libjpeg-turbo minimum 89.82 / 84.85 (main 89.81 / 84.88). Annex K tables (`HMB_HIGH_TABLES=annexk`, +3.7 %) and
+baseline coding (`HMB_HIGH_SCAN=baseline`, −8.6 % on ImageIO but every file 89.2–89.8 under libjpeg-turbo) are
+switches, not defaults (D-ENG-13). `HMB_HIGH=off` reproduces main byte for byte; `HMB_HIGH_BAND=<from>,<first>` sets the
+band. The high mode's results go through the decoder guard like every full-size result (§3.6): at these targets
+jpegli 4:2:0 without AQ is not always read higher by libjpeg-turbo (holdout gap down to −0.075), see §11.
 
 #### `.proxyCurve` (the §3.4 loop)
 
@@ -269,6 +302,30 @@ Details and the rejected settings: `Docs/variants/search.md`.
 reproduces d42cb2d byte for byte, with only the post-pass on it reproduces `eng-postpass`, with only the tuning on
 `eng-search` (19/19 SHA-256 each, `Docs/variants/eng-v3.md`).
 
+### 3.6 Decoder guard (D-ENG-12, branch `eng-safety`; integrated in `eng-r2`, D-ENG-14)
+
+ImageIO stays the scoring decoder (D-ENG-2). Browsers decode JPEG with libjpeg-turbo, whose pixels differ from
+ImageIO's by up to ±0.5 points on the same file. `IslowDecoder` reproduces libjpeg-turbo's default decompressor
+(ISLOW IDCT, fancy upsampling with context rows, `jdcolor.c` fixed-point colour) from jpegli's coefficients, in process,
+pixel-identical to `djpeg` 3.2 (`IslowDecodeTests`); layouts other than 8-bit YCbCr 4:4:4 / 4:2:0 return nil and keep
+the ImageIO score.
+
+```
+guarded(c) = ImageIO(c) < T or chroma not covered → ImageIO(c)
+             else min(ImageIO(c), score(IslowDecoder(c), same reference))
+DirectSearch (resized): every passing JPEG probe and post-pass rewrite is guarded (≈ 0.02 s per 1440 px decode)
+MosaicSearch (full size): probes scored by ImageIO; the result r is guarded (≈ 0.4 s per 45 MP decode + one score);
+             guarded(r) < T → the next-smallest passing probe the same way; none → the whole search again
+             (tuned and high mode) with every passing probe guarded; mosaic points stay cached
+modes      : .all (default) every JPEG; .chroma444 4:4:4 only; .off = eng-v3 (`HMB_DECODER_GUARD`)
+```
+
+The viewer decoder comes from the primitives (`EnginePrimitives.viewerDecoder`: `IslowDecoder` in `live()`, nil in
+`fakes()`, whose "JPEGs" are not JPEGs, so fake-based tests run unguarded). The second decode takes the decode slot of
+the first, after the ImageIO candidate is released. WebP is not guarded:
+ImageIO's WebP pixels are libwebp's (19/19 identical). Audit tool: `DecoderAuditTests` (opt-in, `HMB_DECODER_AUDIT*`,
+Couple / Website / Social / High / Highest folders, `HMB_DECODER_AUDIT_FAST=1` = in-process libjpeg-turbo only).
+
 ## 4. Writing, journal and resume (§3.8)
 
 **Source protection.** `SourceGuard` stores the (device, inode) of every source file, every source root and every
@@ -355,7 +412,7 @@ variants are made first (one sRGB conversion, one resize per size) and the deliv
 
 | Kind | Estimate |
 |---|---|
-| Full-size JPEG | mosaic proxy curve (3 encodes + scores, `JPEGTuning.fullSize`, proxy scan script), mosaic encoded at d* = exp(inv(G)) with the tuning at level 2, × pixel ratio × κ + marker bytes; G = T + exactMargin − exactBiasPrior (= T + 1.13) for `.mosaicExact`, T + M0 − BIAS for `.proxyCurve`; capped at the source size when keep-original would apply |
+| Full-size JPEG | mosaic proxy curve (3 encodes + scores, `JPEGTuning.fullSize`, proxy scan script), mosaic encoded at d* = exp(inv(G)) with the tuning at level 2, × pixel ratio × κ + marker bytes; G = T + exactMargin − exactBiasPrior (= T + 1.13) for `.mosaicExact`, T + M0 − BIAS for `.proxyCurve`; capped at the source size when keep-original would apply. Fixed floors in the high mode (D-ENG-13): the same with `highTarget` at 4:2:0 (and 4:4:4 from `high444From`, the smaller), its prior and bias prior −0.3 (holdout actual / estimate: Highest 1.030, High 1.044) |
 | Full-size WebP | mosaic encoded at qPrior × pixel ratio × κ |
 | Resized (and small full-size) | **the delivery's real DirectSearch on the sample's variant** (WebP with its JPEG fallback and `WebPTuning.default`; JPEG with `JPEGTuning.resized` and the 4:4:4-first rule), best passing bytes × κ (D-ENG-4). The post-pass (scan rewrite, zeroing) is not modelled; live test after D-ENG-11 (holdout, all four, actual / estimate): couple 0.998, website 1.010, social 1.000, archive 1.000 |
 | Archive | 0.78 × JPEG bytes + 1.0 × other bytes, over all photos |
@@ -453,7 +510,8 @@ job whose photo set was estimated in this session; time is attributed to deliver
   scores no longer take the lane lock (each caller has its own pooled working set); a deferred 45 MP score builds the
   pyramid and scores in one command buffer. The jpegli progressive tokenisers skip zero coefficients through two
   64-bit masks per block (`Vendor/patches/libjxl/0001-jpegli-tokenize-masks.patch`, applied by
-  `Scripts/build-codecs.sh`; `Vendor/codecs.lock` pins the patched archive; `EncoderGoldenTests` compares 784 outputs
+  `Scripts/build-codecs.sh`; `Vendor/codecs.lock` pins the patched archive, since D-ENG-12 with normalised ar headers
+  (`6e8cf4a9…`, same members as `3e81407d…`); `EncoderGoldenTests` compares 784 outputs
   with the unpatched build). Couple-only jobs now peak at 5.2–6.0 GB footprint (was 3.8–4.2 GB); four-delivery jobs are
   unchanged.
 - Variants no later delivery needs are dropped before each delivery: the full-resolution sRGB copy made for Website
@@ -479,3 +537,21 @@ is contained in `JPEGTuning.fullSize`'s chroma 0.65). `eng-research` changed no 
 tuned and in the proxy script; the scan choice is read from the tuned proxy mosaic's coefficients.
 `ScanScriptEquivalenceTests.tunedTablesDecodeToTheSamePixelsInEveryScript` checks that all three scripts decode to the
 same pixels with both tunings. Measurements: `Docs/variants/eng-v3.md`, `Docs/BENCHMARKS.md`.
+
+## 11. Engine integration `eng-r2` (2026-10-16, D-ENG-14)
+
+`eng-safety` (decoder guard, `IslowDecoder`, reproducible codec lock 6e8cf4a9) and `eng-highest` (high-target mode)
+merged in that order. The high mode's oracle runs inside the full-size search that the guard wraps, so the guard covers
+high-mode results at 4:2:0 and 4:4:4. Holdout, release, all six deliveries in one job, back to back with main
+(`Docs/BENCHMARKS.md`): Couple, Website, Archive byte-identical; Social −315 B (7 files moved by the guard); High
+−3.39 %; Highest −4.72 % (182,463,652 B: the guard moved one high-mode 4:2:0 file that libjpeg-turbo read at 89.998 to
+4:4:4, +125,711 B against `.chroma444`). Every delivered JPEG ≥ target under ImageIO and libjpeg-turbo. CPU +13 %,
+wall +22 % on the six-delivery job (load 5–8); about 28 s CPU of the +34 s are the 57 full-size guard decodes
+(`.chroma444` run: 259.7 s).
+
+Tests (`swift test`, debug, env sourced, run alone, load 4–15 from other agents): 396 tests in 75 suites, two full
+runs of 680–776 s; each run had one load-sensitive failure that passes when its suite runs alone
+(`ServiceTests.estimateIsCancellable`: cancel took 4.13 s against the 4.0 s loaded budget; then
+`ComparePerformanceTests.fortyFiveMegapixelPairs`: no pair within 20 s, 3.3 s alone; the same test also failed in
+eng-v3's full runs under load). `IslowDecodeTests.matchesDjpegOnSamples` alone takes ~12 min in debug (six 45 MP
+originals and their encodes against `djpeg`).

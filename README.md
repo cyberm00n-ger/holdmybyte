@@ -41,7 +41,10 @@ swift test
 as static libraries, merges them into `Vendor/xcframeworks/HMBCodecs.xcframework` and copies the headers listed in
 `Scripts/codec-headers.txt` into `Sources/CHMBCodecs/vendor-include/`. Both outputs are git-ignored. The script
 audits the archive (no exported `jpeg_*` symbols, no Homebrew paths) and is a no-op when the output already matches
-`OUTPUT_SHA256` in the lock. In a git worktree, clone the main checkout's build instead of rebuilding:
+`OUTPUT_SHA256` in the lock. The archive is reproducible (ar headers normalised to date 0, uid/gid 0, mode 100644), so
+a build that does not match the lock is an error and installs nothing; `Scripts/build-codecs.sh --update-lock` is the
+only way to re-pin (after changing a pin, a patch or the toolchain). The build path must not contain spaces. In a git
+worktree, clone the main checkout's build instead of rebuilding:
 
 ```bash
 Scripts/link-codecs.sh ~/Desktop/holdmybyte
@@ -107,6 +110,21 @@ source "$HOME/Library/Application Support/holdmybyte-dev/env.sh"
 v2 gates (`Benchmarks/baselines.json`). `Scripts/bench.sh holdout | wedding-couple | wedding-all | …` runs one gate
 set into `Benchmarks/runs/`; results, with the machine state of every timing, are in
 [`Docs/BENCHMARKS.md`](Docs/BENCHMARKS.md). Timing gates are only reported on a quiet machine (1-minute load < 3).
+
+Current engine on the 19-photo holdout (400.3 MB of 45 MP Lightroom JPEGs), every delivered file at or above its
+quality floor on the engine's metric, JPEGs also when decoded like libjpeg-turbo (browsers):
+
+| Delivery | Floor | Output |
+|---|---|---|
+| Couple (full size, 4:2:0) | 74 (Balanced) | 48.4 MB |
+| Website (2560 px WebP) | 70 | 5.6 MB |
+| Social (1440 px JPEG) | 85 | 5.3 MB |
+| High (full size) | 85 | 98.8 MB |
+| Highest (full size) | 90 | 182.5 MB |
+| Archive (lossless JPEG XL, byte-exact) | — | 312.4 MB |
+
+Timings depend on machine load and are recorded per run in `Docs/BENCHMARKS.md`; no speed comparison with other
+tools is claimed.
 
 ## Licence
 

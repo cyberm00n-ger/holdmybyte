@@ -35,6 +35,8 @@ typedef struct {
     float dc_ratio;             // each table's DC entry taken at its distance × this; <= 0 or 1 = off
     const int *scan_choice;     // per-component AC scan script (see hmb_jpeg_choose_scans), NULL = progressive_level's;
                                 // ignored for HMB_JPEGLI_SCAN_PROXY and level 0
+    int standard_tables;        // 1 = the Annex K tables (ITU T.81 K.1/K.2, one chroma table) scaled linearly by jpegli
+                                // from the distance (jpegli_use_standard_quant_tables); 0 = jpegli's own tables
 } hmb_jpegli_options;
 int  hmb_jpegli_encode_opts(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
                             const hmb_jpegli_options *options,
@@ -59,6 +61,12 @@ int  hmb_jpeg_rewrite(const uint8_t *jpeg, size_t size, hmb_jpeg_rewrite_options
 int  hmb_jpegli_encode_scans(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
                              float distance, int subsampling_444, int progressive_level, const int *scan_choice,
                              const hmb_marker *markers, size_t marker_count, hmb_buffer *out, char *err, size_t err_len);
+// Decoder guard (D-ENG-12, added after eng-v3): decodes a JPEG into `rgbx` (width × height, `stride` bytes per row,
+// X = 255) to the pixels libjpeg-turbo's default decompressor gives (ISLOW IDCT, fancy upsampling, jdcolor.c tables;
+// djpeg, Chrome, Firefox, Edge). jpegli reads the coefficients. Returns 1 (nothing written) for layouts other than
+// 8-bit 3-component YCbCr 4:4:4 or 4:2:0.
+int  hmb_jpeg_decode_islow(const uint8_t *jpeg, size_t size, uint8_t *rgbx, uint32_t width, uint32_t height,
+                           size_t stride, char *err, size_t err_len);
 typedef struct hmb_webp_prepared hmb_webp_prepared;
 int  hmb_webp_prepare(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
                       hmb_webp_prepared **out, char *err, size_t err_len);
