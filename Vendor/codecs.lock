@@ -3,5 +3,5 @@ LIBJXL_TAG="v0.11.2"
 LIBJXL_COMMIT="332feb17d17311c748445f7ee75c4fb55cc38530"
 LIBWEBP_TAG="v1.6.0"
 LIBWEBP_COMMIT="4fa21912338357f89e4fd51cf2368325b59e9bd9"
-# sha256 of Vendor/xcframeworks/HMBCodecs.xcframework/macos-arm64/libhmbcodecs.a (written by the script)
-OUTPUT_SHA256="3e81407d9094171bb6c6224913903a089a6595f231f58a8fe8d791113bc7d4d0"
+# sha256 of Vendor/xcframeworks/HMBCodecs.xcframework/macos-arm64/libhmbcodecs.a (normalised ar headers; written only by Scripts/build-codecs.sh --update-lock)
+OUTPUT_SHA256="6e8cf4a938925b15a0b8215d979bb7ff1347a4ade6d4bc72330a603be1c4f06e"
