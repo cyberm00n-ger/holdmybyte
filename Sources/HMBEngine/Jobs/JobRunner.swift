@@ -66,7 +66,8 @@ final class JobRunner: @unchecked Sendable {
         var pending: [PhotoResult] = []
         var remaining: [Int: Int] = [:]          // photo index → deliveries still to do in this run
         var photosDone = 0
-        var inFlight = 0
+        var inFlight = 0                          // photos with work running (lossy and archive items of one photo count once)
+        var itemsInFlight: [Int: Int] = [:]       // photo index → items running
         var rate: PhotoRate
         var newResults = 0
     }
@@ -185,7 +186,18 @@ final class JobRunner: @unchecked Sendable {
             if !open.isEmpty { openPlans[photo.id.index] = open }
         }
         let todo = openPlans
-        let workers = min(max(1, todo.count), options.workerCount ?? WorkerPool.workerCount(request.processorUse))
+        let order = scope.map(\.id.index).filter { todo[$0] != nil }
+        // Two kinds of work items (D-ENG-10): a photo's archive (kind 0, needs only the file bytes) and its lossy
+        // deliveries (kind 1, one decode shared by all of them). Splitting them lets the pool cap concurrent archive
+        // transcodes while the other workers keep doing lossy work; the memory plan sets the counts.
+        let archiveItems = order.filter { todo[$0]?.contains { !$0.preset.isLossy } == true }
+        let lossyItems = order.filter { todo[$0]?.contains { $0.preset.isLossy } == true }
+        let memoryPlan = MemoryPlan(options: options,
+                                    workers: min(max(1, todo.count), options.workerCount ?? WorkerPool.workerCount(request.processorUse)),
+                                    largestPixels: scope.filter { todo[$0.id.index] != nil }.map { $0.pixelWidth * $0.pixelHeight }.max() ?? 0,
+                                    archive: !archiveItems.isEmpty, lossy: !lossyItems.isEmpty)
+        Self.log.info("memory plan: \(memoryPlan.description, privacy: .public)")
+        let workers = memoryPlan.workers
         let state = Locked(RunState(rate: PhotoRate(start: started, parallelism: workers)))
         state.withLock { s in
             s.results = carried
@@ -200,17 +212,30 @@ final class JobRunner: @unchecked Sendable {
                                       outputFolder: output, sourceRoots: request.sourceRoots, cancel: cancel, adoptIdentical: appendMode)
         let pipeline = PhotoPipeline(context: context)
         let photosByIndex = Dictionary(uniqueKeysWithValues: scope.map { ($0.id.index, $0) })
-        let order = scope.map(\.id.index).filter { todo[$0] != nil }
+        let lossyLeft = Locked(lossyItems.count)
+        let lane = self.lane
         let cancel = self.cancel
         let remainingBytes: @Sendable () -> Int64 = { [state] in
             Self.remainingBytes(state: state.snapshot, scope: scope, plans: plans)
         }
 
-        let pool = WorkerPool(items: order, count: workers, qos: WorkerPool.qos(request.processorUse), name: "holdmybyte worker",
-                              shouldContinue: { !cancel.isCancelled }) { [self] index, _ in
-            guard let photo = photosByIndex[index], let open = todo[index] else { return }
-            state.withLock { $0.inFlight += 1 }
-            defer { state.withLock { $0.inFlight -= 1 } }
+        let pool = WorkerPool(kinds: [archiveItems, lossyItems], count: workers, qos: WorkerPool.qos(request.processorUse),
+                              name: "holdmybyte worker", admit: memoryPlan.admit,
+                              shouldContinue: { !cancel.isCancelled }) { [self] index, kind, _ in
+            guard let photo = photosByIndex[index], let all = todo[index] else { return }
+            let open = all.filter { $0.preset.isLossy == (kind == MemoryPlan.lossyKind) }
+            guard !open.isEmpty else { return }
+            state.withLock { s in
+                s.itemsInFlight[index, default: 0] += 1
+                s.inFlight = s.itemsInFlight.count
+            }
+            defer {
+                state.withLock { s in
+                    let left = (s.itemsInFlight[index] ?? 1) - 1
+                    s.itemsInFlight[index] = left > 0 ? left : nil
+                    s.inFlight = s.itemsInFlight.count
+                }
+            }
             var recorded = Set<DeliveryID>()
             func record(_ result: PhotoResult) throws {
                 try journal.append(result)
@@ -223,6 +248,11 @@ final class JobRunner: @unchecked Sendable {
                     s.remaining[index] = left
                     if left == 0 { s.photosDone += 1; s.rate.photoFinished(at: monotonicSeconds()) }
                 }
+            }
+            defer {
+                // The last lossy item gives the metric's pooled full-size buffers back (1.5 GB at 45 MP), which the
+                // memory plan then lets the remaining archives use.
+                if kind == MemoryPlan.lossyKind, lossyLeft.withLock({ $0 -= 1; return $0 == 0 }) { lane.drainPools() }
             }
             do {
                 try pipeline.process(photo, plans: open, emit: record)

@@ -10,6 +10,10 @@
 
 #include <jxl/decode.h>
 #include <jxl/encode.h>
+#include <jxl/memory_manager.h>
+#include <sys/mman.h>
+
+#include "arena.h"
 
 namespace {
 
@@ -36,6 +40,43 @@ const char *encoder_error(JxlEncoderError code) {
     }
 }
 
+// libjxl's own buffers (image planes, coefficients: ~1.3 GB at peak for a 45 MP transcode) come from this memory
+// manager instead of malloc. Blocks of 256 KB and more are anonymous mappings that go back to the kernel the moment
+// libjxl frees them; through malloc, macOS kept them in its large-allocation cache, so every transcode a job ever
+// ran in parallel stayed in the process's footprint (Docs/DECISIONS.md D-ENG-10). Smaller blocks stay on malloc.
+// The size lives in a 64-byte header (keeps libjxl's 64-byte alignment of the returned pointer).
+constexpr size_t kHeader = 64;
+constexpr size_t kMapThreshold = 256 * 1024;
+
+void *hmb_jxl_alloc(void *, size_t size) {
+    if (void *p = hmb_arena::allocate(size)) return p;
+    const size_t total = size + kHeader;
+    uint8_t *base;
+    if (total >= kMapThreshold) {
+        void *mapped = mmap(nullptr, total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (mapped == MAP_FAILED) return nullptr;
+        base = static_cast<uint8_t *>(mapped);
+    } else {
+        base = static_cast<uint8_t *>(std::malloc(total));
+        if (base == nullptr) return nullptr;
+    }
+    *reinterpret_cast<size_t *>(base) = total;
+    return base + kHeader;
+}
+
+void hmb_jxl_free(void *, void *address) {
+    if (address == nullptr || hmb_arena::release(address)) return;
+    uint8_t *base = static_cast<uint8_t *>(address) - kHeader;
+    const size_t total = *reinterpret_cast<size_t *>(base);
+    if (total >= kMapThreshold) {
+        munmap(base, total);
+    } else {
+        std::free(base);
+    }
+}
+
+JxlMemoryManager memory_manager = {nullptr, hmb_jxl_alloc, hmb_jxl_free};
+
 /// A growable malloc'ed byte buffer (plain struct: no destructors, explicit release).
 struct Growable {
     uint8_t *data;
@@ -60,7 +101,8 @@ int hmb_jxl_transcode_jpeg(const uint8_t *jpeg, size_t size, int effort, hmb_buf
     if (jpeg == nullptr || size < 4) return fail(err, err_len, "hmb_jxl_transcode_jpeg: input is empty");
     if (effort < 1 || effort > 10) return fail(err, err_len, "hmb_jxl_transcode_jpeg: effort %d outside 1...10", effort);
 
-    JxlEncoder *encoder = JxlEncoderCreate(nullptr);
+    hmb_arena::Scope arena;   // libjxl's containers come from a private arena, returned when this call ends
+    JxlEncoder *encoder = JxlEncoderCreate(&memory_manager);
     if (encoder == nullptr) return fail(err, err_len, "hmb_jxl_transcode_jpeg: out of memory (encoder)");
     Growable buffer = {nullptr, 0};
     int result = 0;
@@ -118,7 +160,8 @@ int hmb_jxl_reconstruct_jpeg(const uint8_t *jxl, size_t size, hmb_buffer *out, c
     out->size = 0;
     if (jxl == nullptr || size == 0) return fail(err, err_len, "hmb_jxl_reconstruct_jpeg: input is empty");
 
-    JxlDecoder *decoder = JxlDecoderCreate(nullptr);
+    hmb_arena::Scope arena;
+    JxlDecoder *decoder = JxlDecoderCreate(&memory_manager);
     if (decoder == nullptr) return fail(err, err_len, "hmb_jxl_reconstruct_jpeg: out of memory (decoder)");
     Growable buffer = {nullptr, 0};
     size_t used = 0;

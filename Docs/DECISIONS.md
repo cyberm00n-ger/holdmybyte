@@ -165,3 +165,28 @@ Append-only. One short entry each: date, area, the question it answers, the deci
 - **[app] UI test timeouts.** `waitUntil` defaults to 90 s (was 10 s): in the full `swift test` process the engine
   suites' synchronous work starves the cooperative pool, and 12 flow tests timed out together at load 38. Passing
   tests return as soon as their condition holds.
+
+## D-ENG-10 · 2026-10-16 · Memory: arenas, deferred references, archive lanes, memory plan; G7 (engine, branch `polish-engine`)
+
+Supersedes the "needs structural work" part of D-ENG-7. **Findings:** the 18.5 GB peak was (1) GPU: up to 3 live
+45 MP reference pyramids (0.73 GB each) plus pooled spares and working sets that the 3-geometry LRU kept re-allocating
+(7 geometries in a four-delivery job); (2) libjxl: 1.3 GB of image planes plus ~0.9 GB of C++ container churn per
+concurrent transcode; (3) macOS malloc keeping every freed large block resident (large-block cache, tested up to
+8 GB; `malloc_zone_pressure_relief`, memory-pressure events and destroying a `malloc_create_zone` zone release
+nothing; only `MallocLargeCache=0` at process start does), so the peak was the sum of every concurrency high-water
+mark. **Decisions:** (a) full-size references are deferred: the GPU pyramid is rebuilt inside the lane per score
+(bit-identical scores, ~35 ms GPU each); Metal pools keyed orientation-free with a 2 GB byte LRU. (b) `PixelImage` ≥
+1 MB, libjxl (memory manager + global `operator new` while a libjxl call runs, `CHMBCodecs/arena.cc`), jpegli
+(`cinfo->mem`) and vImage scratch no longer use malloc: anonymous mappings / per-call arenas returned at once.
+(c) A photo's archive is its own work item; `MemoryPlan` sets workers and archive lanes from a per-pixel model, a
+budget of min(8 GB, RAM/2) and the largest photo: 45 MP, 8 processor workers → **7 workers, 3 archive lanes**;
+archives may expand once lossy work is done (pools drained). (d) At most 2 full-size decodes at once (ImageIO holds a
+second 177 MB buffer while decoding). (e) `hmb` re-executes itself with `MallocLargeCache=0` (a batch process; the old
+engine child keeps the default). **Follow-up for the app (not done, outside the engine):** set
+`LSEnvironment = { MallocLargeCache = 0 }` in the app's Info.plist (Scripts/bundle-app.sh), else the app runs the
+engine without (e) — measured −0.4 GB footprint on 60 photos. **Owner question:** G7 says "peak RSS"; on macOS RSS
+counts pages malloc has already given back as reusable, and Activity Monitor/jetsam use the physical footprint.
+Both are reported (Docs/ENGINE.md §8, Docs/BENCHMARKS.md). **Result** (wedding 535, all four, A/B at the same load
+class): peak RSS 18.82 → **7.18 GB**, footprint 19.55 → **7.42 GB**, wall 513.6 → 564.4 s (+9.9 %); all 2140 outputs
+SHA-256-identical to the baseline build, sources unchanged. Without (e), otherwise the same code, the peak was 8.22 GB
+footprint / 7.34 GB RSS (8.04 / 7.31 GB one step earlier), so the app needs the follow-up to stay under 8 GB.

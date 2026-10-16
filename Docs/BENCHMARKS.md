@@ -175,3 +175,29 @@ the same suite failed 3 tests at load 7–38: `pauseResumeStop`, `startNowInstea
 finished before the intent) and the scanner's 500 files/s budget (asserted below load 10, failed at ~10). One later
 run under extra I/O load (a parallel 11 GB checksum) also failed `estimateIsCancellable` (1.64 s vs 1.5 s) and
 `startWhileScanningStartsWhenScanEnds` (10 s timeout); both passed 3/3 alone and in the next full run.
+
+## G7 memory pass (2026-10-16, branch `polish-engine`, D-ENG-10)
+
+Release `hmb compress <wedding> --delivery couple --delivery website --delivery social --delivery archive` under
+`/usr/bin/time -l` (the job only; the bench's estimate phase runs before it), MacBookPro18,4, 64 GB, Lightroom and a
+VM running, never quiet. Outputs hashed (SHA-256) and deleted after each run; every run below produced the same 2140
+files as the baseline build (Couple and Archive also equal `runs/20261015-211705-wedding-all`; Website/Social differ
+from that run only by D-ENG-8). Sources: `shasum -a 256` of all 535 after the last run equals
+`runs/wedding-sha256-before.txt`, no file newer than it in the source folder (11:17).
+
+| Run (A/B, back to back) | Workers / archive lanes | Wall | CPU user + sys | Peak RSS | Peak footprint | 1-min load |
+|---|---|---|---|---|---|---|
+| baseline f8c2e1f | 8 / – | 513.6 s | 3148 + 255 s | 18.82 GB | 19.55 GB | 14.4 → 10.2 |
+| this branch | 7 / 3 | 564.4 s (+9.9 %) | 3123 + 410 s | **7.18 GB** | **7.42 GB** | 6.1 → 13.2 |
+
+**G7 memory: pass** on both readings (gate ≤ 8 GB peak RSS). The earlier baseline run (22:45, load 7.2 → 15.5) took
+501.3 s with 19.39 GB RSS / 21.30 GB footprint. The step-by-step runs are in Docs/ENGINE.md §8; from 01:00 the Mac
+repeatedly entered maintenance sleep and swapped, so only the two runs above (awake throughout, `mach_absolute_time`
+equal to wall) are used for time. Without `hmb`'s `MallocLargeCache=0` re-exec the same code peaked at 8.22 GB
+footprint / 7.34 GB RSS: the app needs `LSEnvironment` (D-ENG-10 follow-up). Archive-only jobs now run 5 lanes at
+45 MP (memory plan) instead of 8 workers; G6 time alone was not re-measured.
+
+**Tests.** Full `swift test` with env.sh sourced: 356 tests pass (load 21 → 17). An earlier full run at load 34 → 53
+(the Mac in maintenance sleep and swapping) failed 6 timing/timeout tests (`fortyFiveMegapixelPairs`, two Setup
+estimate flows, `estimateIsCancellable` at 1.5002 s, `quitWhileRunningClosesASheet…`,
+`startWhileScanningStartsWhenScanEnds`); all 6 passed alone right after, and the whole suite passed in the next run.

@@ -9,17 +9,38 @@ public final class PixelImage: @unchecked Sendable {
     public let width: Int, height: Int, bytesPerRow: Int
     public let colorSpace: CGColorSpace
     public let pixels: UnsafeMutableRawBufferPointer        // owned; freed in deinit
+    /// Pages mapped for `pixels` (0: heap allocation).
+    private let mappedBytes: Int
     /// Zero-filled, bytesPerRow = width * 4 rounded up to 64.
+    ///
+    /// Images of 1 MB and more get their own anonymous mapping (page-aligned, zero-filled by the kernel) and give
+    /// it back with `munmap` in deinit (D-ENG-10): through malloc, macOS keeps freed blocks of this size resident in
+    /// its large-allocation cache, so every candidate decode and source image a job had ever freed stayed in the
+    /// process's footprint.
     public init(width: Int, height: Int, colorSpace: CGColorSpace) {
         precondition(width > 0 && height > 0, "PixelImage needs a positive size")
         self.width = width
         self.height = height
         self.bytesPerRow = (width * 4 + 63) & ~63
         self.colorSpace = colorSpace
-        self.pixels = UnsafeMutableRawBufferPointer.allocate(byteCount: bytesPerRow * height, alignment: 64)
-        self.pixels.initializeMemory(as: UInt8.self, repeating: 0)
+        let count = bytesPerRow * height
+        if count >= Self.mapThreshold {
+            let page = Int(getpagesize())
+            let length = (count + page - 1) / page * page
+            let base = mmap(nil, length, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+            precondition(base != MAP_FAILED && base != nil, "PixelImage: cannot map \(length) bytes (errno \(errno))")
+            self.pixels = UnsafeMutableRawBufferPointer(start: base, count: count)
+            self.mappedBytes = length
+        } else {
+            self.pixels = UnsafeMutableRawBufferPointer.allocate(byteCount: count, alignment: 64)
+            self.pixels.initializeMemory(as: UInt8.self, repeating: 0)
+            self.mappedBytes = 0
+        }
     }
-    deinit { pixels.deallocate() }
+    deinit {
+        if mappedBytes > 0 { munmap(pixels.baseAddress, mappedBytes) } else { pixels.deallocate() }
+    }
+    static let mapThreshold = 1 << 20
     public var pixelCount: Int { width * height }
 }
 

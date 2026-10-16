@@ -86,6 +86,30 @@ import Testing
         metal.release(again)
     }
 
+    /// Landscape and portrait share one pooled working set and reference (D-ENG-10): scores through the shared pool,
+    /// in any order and with small geometries in between, equal those of a fresh metric.
+    @Test func transposedGeometriesShareThePoolsAndScoreTheSame() throws {
+        func pair(_ w: Int, _ h: Int, _ kind: Synthetic.Kind) throws -> (PixelImage, PixelImage) {
+            let reference = Synthetic.image(kind, width: w, height: h)
+            return (reference, try decoder.decode(encoded: try jpeg.encode(reference, distance: 2, subsampling: .s420, markers: [])))
+        }
+        let cases = [try pair(900, 600, .waves), try pair(600, 900, .noise), try pair(130, 90, .blocks),
+                     try pair(900, 600, .gradient), try pair(600, 900, .waves)]
+        func score(_ metric: MetalSSIMULACRA2, _ p: (PixelImage, PixelImage)) throws -> Double {
+            let session = try metric.prepareReference(p.0)
+            defer { metric.release(session) }
+            return try metric.score(p.1, against: session)
+        }
+        let shared = try MetalSSIMULACRA2()
+        let pooled = try cases.map { try score(shared, $0) }
+        let fresh = try cases.map { try score(try MetalSSIMULACRA2(), $0) }
+        #expect(pooled == fresh)
+        #expect(MetalSSIMULACRA2.Geometry(width: 900, height: 600).poolKey == MetalSSIMULACRA2.Geometry(width: 600, height: 900).poolKey)
+        let a = MetalSSIMULACRA2.Geometry(width: 8256, height: 5504), b = MetalSSIMULACRA2.Geometry(width: 5504, height: 8256)
+        #expect(MetalSSIMULACRA2.tileLayout(a.sizes).total == MetalSSIMULACRA2.tileLayout(b.sizes).total)
+        #expect(zip(a.sizes, b.sizes).allSatisfy { $0.width * $0.height == $1.width * $1.height })
+    }
+
     @Test func misuseThrows() throws {
         let reference = Synthetic.image(.waves, width: 64, height: 48)
         let session = try metal.prepareReference(reference)

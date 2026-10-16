@@ -48,25 +48,75 @@ final class CancelToken: Sendable {
     }
 }
 
-/// N dedicated `Thread`s (8 MB stacks) pulling item indices from a locked FIFO (§3.9).
+/// N dedicated `Thread`s (8 MB stacks) pulling item indices from locked FIFOs (§3.9).
+///
+/// Items come in kinds (one FIFO each). A worker takes the head of the first kind, in `kinds` order, that `admit`
+/// lets start given how many items of each kind are running and queued; when items are left but none may start,
+/// it waits until a running item ends (or the job is cancelled). With a single kind and no `admit` this is the plain
+/// FIFO pool of §3.9. The job runner uses two kinds to cap concurrent archive transcodes without idling workers
+/// (D-ENG-10): a worker that may not start an archive takes the next photo's lossy work instead.
 final class WorkerPool: @unchecked Sendable {
-    private let queue: Locked<[Int]>
+    /// What `admit` sees: running and queued items per kind.
+    struct Load: Sendable {
+        var running: [Int]
+        var queued: [Int]
+    }
+
+    private let condition = NSCondition()
+    private var queues: [[Int]]                         // reversed: popLast() serves the FIFO head
+    private var running: [Int]
     private let group = DispatchGroup()
     private let count: Int
     private let qos: QualityOfService
     private let name: String
-    private let work: @Sendable (_ item: Int, _ worker: Int) -> Void
+    private let work: @Sendable (_ item: Int, _ kind: Int, _ worker: Int) -> Void
+    private let admit: @Sendable (_ kind: Int, _ load: Load) -> Bool
     private let shouldContinue: @Sendable () -> Bool
 
-    init(items: [Int], count: Int, qos: QualityOfService, name: String,
+    init(kinds: [[Int]], count: Int, qos: QualityOfService, name: String,
+         admit: @escaping @Sendable (_ kind: Int, _ load: Load) -> Bool = { _, _ in true },
          shouldContinue: @escaping @Sendable () -> Bool,
-         work: @escaping @Sendable (_ item: Int, _ worker: Int) -> Void) {
-        self.queue = Locked(items.reversed())          // popLast() serves the FIFO head
+         work: @escaping @Sendable (_ item: Int, _ kind: Int, _ worker: Int) -> Void) {
+        self.queues = kinds.map { Array($0.reversed()) }
+        self.running = Array(repeating: 0, count: kinds.count)
         self.count = max(1, count)
         self.qos = qos
         self.name = name
         self.work = work
+        self.admit = admit
         self.shouldContinue = shouldContinue
+    }
+
+    convenience init(items: [Int], count: Int, qos: QualityOfService, name: String,
+                     shouldContinue: @escaping @Sendable () -> Bool,
+                     work: @escaping @Sendable (_ item: Int, _ worker: Int) -> Void) {
+        self.init(kinds: [items], count: count, qos: qos, name: name, shouldContinue: shouldContinue) { item, _, worker in
+            work(item, worker)
+        }
+    }
+
+    /// The next item to run and its kind, or nil when nothing is left or the job is cancelled.
+    private func take() -> (item: Int, kind: Int)? {
+        condition.lock()
+        defer { condition.unlock() }
+        while shouldContinue() {
+            if queues.allSatisfy(\.isEmpty) { return nil }
+            let load = Load(running: running, queued: queues.map(\.count))
+            for kind in queues.indices where !queues[kind].isEmpty && admit(kind, load) {
+                running[kind] += 1
+                return (queues[kind].removeLast(), kind)
+            }
+            // Something is queued but nothing may start: wait for a running item to end (poll the token meanwhile).
+            _ = condition.wait(until: Date(timeIntervalSinceNow: 0.05))
+        }
+        return nil
+    }
+
+    private func finished(_ kind: Int) {
+        condition.lock()
+        running[kind] -= 1
+        condition.broadcast()
+        condition.unlock()
     }
 
     func start() {
@@ -74,8 +124,9 @@ final class WorkerPool: @unchecked Sendable {
             group.enter()
             let thread = Thread { [self] in
                 defer { group.leave() }
-                while shouldContinue(), let item = queue.withLock({ $0.popLast() }) {
-                    work(item, index)
+                while let (item, kind) = take() {
+                    work(item, kind, index)
+                    finished(kind)
                 }
             }
             thread.stackSize = 8 << 20
@@ -89,7 +140,11 @@ final class WorkerPool: @unchecked Sendable {
     func wait(timeout: Double) -> Bool { group.wait(timeout: .now() + timeout) == .success }
 
     /// Items not yet taken by a worker.
-    var remaining: Int { queue.withLock { $0.count } }
+    var remaining: Int {
+        condition.lock()
+        defer { condition.unlock() }
+        return queues.reduce(0) { $0 + $1.count }
+    }
 
     /// Worker count for a processor-use setting (§3.9).
     static func workerCount(_ use: ProcessorUse, processors: Int = ProcessInfo.processInfo.activeProcessorCount) -> Int {

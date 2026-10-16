@@ -37,9 +37,13 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
     ///     behind WP2's single MetricLane; a cold working set costs ~30 ms more per score.
     ///   - referenceRetention: spare reference pyramids kept per geometry after `release` (0.73 GB each at 45 MP);
     ///     reusing one saves ~35 ms per `prepareReference`. 0 trades that time for memory.
-    public init(workingSetRetention: Int = 1, referenceRetention: Int = 1) throws {
+    ///   - poolByteLimit: pooled bytes kept over all geometries (least recently used geometries go first). The
+    ///     default holds one 45 MP working set and reference (1.45 GB) plus the resized and mosaic geometries of a
+    ///     job (~0.35 GB), so the pools stop reallocating across a four-delivery job (D-ENG-10).
+    public init(workingSetRetention: Int = 1, referenceRetention: Int = 1, poolByteLimit: Int = 2_000_000_000) throws {
         self.workingSetRetention = max(0, workingSetRetention)
         self.referenceRetention = max(0, referenceRetention)
+        self.poolByteLimit = max(0, poolByteLimit)
         guard let device = MTLCreateSystemDefaultDevice() else { throw PrimitiveError("Metal is not available") }
         guard let queue = device.makeCommandQueue() else { throw PrimitiveError("Metal: no command queue") }
         let options = MTLCompileOptions()
@@ -75,6 +79,16 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
     struct Geometry: Hashable {
         let width: Int, height: Int
         var sizes: [(width: Int, height: Int)] { SSIMULACRA2.pyramidSizes(width: width, height: height) }
+        /// Pools are keyed orientation-free: a transposed geometry has the same plane sizes at every scale and the
+        /// same tile count (square tiles), so landscape and portrait photos share one working set and one reference.
+        var poolKey: Geometry { Geometry(width: max(width, height), height: min(width, height)) }
+        /// Bytes of one working set (excluding the upload buffer) plus one reference pyramid of this geometry.
+        var pooledBytes: Int {
+            let sizes = self.sizes
+            let count = { (scale: Int) -> Int in scale < sizes.count ? sizes[scale].width * sizes[scale].height : 1 }
+            let pyramid = sizes.reduce(0) { $0 + 3 * $1.width * $1.height }
+            return 4 * (pyramid + 3 * (count(0) + count(1) + count(2)) + MetalSSIMULACRA2.tileLayout(sizes).total)
+        }
     }
 
     /// Tiles per channel at each scale, and the float offset of each scale's partials.
@@ -366,16 +380,22 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
     private let poolLock = NSLock()
     private var workingSets: [Geometry: [WorkingSet]] = [:]
     private var referencePool: [Geometry: [[MTLBuffer]]] = [:]
+    /// Pool keys (`Geometry.poolKey`), least recently used first.
     private var recentGeometries: [Geometry] = []
     private let workingSetRetention: Int
     private let referenceRetention: Int
-    /// Geometries kept in the pools (a wedding sees landscape, portrait and the 2048×1024 mosaic).
-    private let geometryRetention = 3
+    private let poolByteLimit: Int
+    /// Upper bound on the geometries kept, whatever their size.
+    private let geometryRetention = 8
 
-    private func notePool(_ geometry: Geometry) {
-        recentGeometries.removeAll { $0 == geometry }
-        recentGeometries.append(geometry)
-        while recentGeometries.count > geometryRetention {
+    /// Marks `key` as used now and evicts the least recently used other keys while the geometries kept would hold
+    /// more than `poolByteLimit` (counting each key at its full working set + reference).
+    private func notePool(_ key: Geometry) {
+        recentGeometries.removeAll { $0 == key }
+        recentGeometries.append(key)
+        func retainedBytes() -> Int { recentGeometries.reduce(0) { $0 + $1.pooledBytes } }
+        while recentGeometries.count > 1,
+              recentGeometries.count > geometryRetention || retainedBytes() > poolByteLimit {
             let evicted = recentGeometries.removeFirst()
             workingSets[evicted] = nil
             referencePool[evicted] = nil
@@ -391,8 +411,8 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
 
     private func acquireWorkingSet(_ geometry: Geometry) throws -> WorkingSet {
         let pooled: WorkingSet? = poolLock.withLock {
-            notePool(geometry)
-            return workingSets[geometry]?.popLast()
+            notePool(geometry.poolKey)
+            return workingSets[geometry.poolKey]?.popLast()
         }
         if let pooled { return pooled }
         let sizes = geometry.sizes
@@ -401,7 +421,7 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
         guard let partials = device.makeBuffer(length: max(1, layout.total) * 4, options: .storageModeShared) else {
             throw PrimitiveError("Metal: could not allocate the partials")
         }
-        return WorkingSet(geometry: geometry, xyb: try makePrivate(3 * count(0)),
+        return WorkingSet(geometry: geometry.poolKey, xyb: try makePrivate(3 * count(0)),
                           linear: [try makePrivate(3 * count(2)), try makePrivate(3 * count(1))], partials: partials)
     }
 
@@ -417,19 +437,20 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
 
     private func acquireReferenceStorage(_ geometry: Geometry) throws -> [MTLBuffer] {
         let pooled: [MTLBuffer]? = poolLock.withLock {
-            notePool(geometry)
-            return referencePool[geometry]?.popLast()
+            notePool(geometry.poolKey)
+            return referencePool[geometry.poolKey]?.popLast()
         }
         if let pooled { return pooled }
         return try geometry.sizes.map { try makePrivate(3 * $0.width * $0.height) }
     }
 
     private func recycleReferenceStorage(_ buffers: [MTLBuffer], geometry: Geometry) {
+        let key = geometry.poolKey
         poolLock.withLock {
-            var stored = referencePool[geometry] ?? []
-            if stored.count < referenceRetention, recentGeometries.contains(geometry) {
+            var stored = referencePool[key] ?? []
+            if stored.count < referenceRetention, recentGeometries.contains(key) {
                 stored.append(buffers)
-                referencePool[geometry] = stored
+                referencePool[key] = stored
             }
         }
     }

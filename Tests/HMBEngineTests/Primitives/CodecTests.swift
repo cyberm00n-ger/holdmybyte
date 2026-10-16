@@ -255,27 +255,34 @@ import Testing
         if pid == 0 {
             close(readEnd)
             let before = Self.heapInUse()
+            // Slots other test threads of the parent owned at the fork are copied as they were; compare, don't assume 0.
+            let arenaBefore = (Int64(hmb_arena_resident_bytes()), Int64(hmb_arena_busy_slots()))
             var ok = true
             for _ in 0..<50 where !round() { ok = false }
-            var delta = ok ? Int64(Self.heapInUse() - before) : Int64.min
-            _ = withUnsafeBytes(of: &delta) { write(writeEnd, $0.baseAddress, 8) }
+            // The codec arenas (D-ENG-10) must be as before: every block freed, every slot used by a round reset.
+            var report: [Int64] = [ok ? Int64(Self.heapInUse() - before) : Int64.min,
+                                   Int64(hmb_arena_resident_bytes()) - arenaBefore.0,
+                                   Int64(hmb_arena_busy_slots()) - arenaBefore.1]
+            _ = report.withUnsafeMutableBytes { write(writeEnd, $0.baseAddress, 24) }
             _exit(0)
         }
         close(writeEnd)
         defer { close(readEnd) }
         try #require(pid > 0, "fork failed: errno \(errno)")
         var poller = pollfd(fd: readEnd, events: Int16(POLLIN), revents: 0)
-        var delta = Int64.max
+        var report: [Int64] = [Int64.max, -1, -1]      // heap delta, arena bytes delta, busy slots delta
         if poll(&poller, 1, 120_000) == 1 {
-            _ = withUnsafeMutableBytes(of: &delta) { read(readEnd, $0.baseAddress, 8) }
+            _ = report.withUnsafeMutableBytes { read(readEnd, $0.baseAddress, 24) }
         } else {
             kill(pid, SIGKILL)
         }
         var status: Int32 = 0
         waitpid(pid, &status, 0)
-        print("[memory] heap delta over 50 rounds in an isolated child: \(delta) bytes")
+        let delta = report[0]
+        print("[memory] heap delta over 50 rounds in an isolated child: \(delta) bytes; arenas \(report[1]) bytes, \(report[2]) busy")
         #expect(delta != Int64.max, "the child did not report (hung or crashed)")
         #expect(delta != Int64.min, "a codec call misbehaved in the child")
         #expect(delta < 5 << 20)
+        #expect(report[1] == 0 && report[2] == 0, "codec arenas must be reset after every call")
     }
 }

@@ -5,6 +5,9 @@
 // it does not bring the all-four job under G7's 8 GB (the lossy workers alone need about that; Docs/BENCHMARKS.md).
 // `EngineOptions.memoryBudget` / `HMB_MEMORY_BUDGET` turn it on for tuning runs.
 //
+// Superseded for the default path by D-ENG-10 (MemoryPlan, deferred references): full-resolution references hold no
+// GPU pyramid between scores any more, so only archive transcodes (and references with deferral off) reserve here.
+//
 // A worker holds at most one reservation at a time (a reference is released before the archive starts, and the
 // mosaic reference stays below the reservation threshold), so the budget cannot deadlock. A reservation larger than
 // the whole budget runs alone. Waiting polls the cancellation token like the metric lane (§3.8 pause latency).
