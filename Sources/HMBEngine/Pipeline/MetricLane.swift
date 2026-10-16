@@ -106,8 +106,20 @@ final class MetricLane: Sendable {
     }
 
     func score(_ candidate: PixelImage, against reference: any MetricReference, cancel: CancelToken) throws -> Double {
-        try locked(cancel) {
+        // Small live references (the search mosaic, scored ~12 times per photo, and resized deliveries up to
+        // `deferredPixels`) are scored outside the lock: their working sets are small and pooled per caller
+        // (MetalSSIMULACRA2), concurrent scores are bit-identical, and the lock's round trips (command buffer
+        // submission and wait, ~4 ms per mosaic score) no longer queue every worker behind one another.
+        if !(reference is DeferredReference), candidate.pixelCount <= Self.deferredPixels {
+            try cancel.check()
+            return try Spans.measure("lane.unlocked") { try metric.score(candidate, against: reference) }
+        }
+        return try locked(cancel) {
             guard let deferred = reference as? DeferredReference else { return try metric.score(candidate, against: reference) }
+            if let metal = metric as? MetalSSIMULACRA2 {
+                // Pyramid and score in one command buffer (one GPU round trip instead of two).
+                return try metal.score(candidate, againstImage: deferred.image)
+            }
             let prepared = try Spans.measure("lane.deferredprepare") { try metric.prepareReference(deferred.image) }
             defer { metric.release(prepared) }
             return try metric.score(candidate, against: prepared)

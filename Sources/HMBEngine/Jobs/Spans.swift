@@ -29,6 +29,15 @@ enum Spans {
         return try body()
     }
 
+    /// Adds GPU execution seconds reported by Metal.
+    static func gpu(_ seconds: Double) {
+        guard enabled else { return }
+        totals.withLock { t in
+            let old = t["metal.gpu"] ?? (0, 0, 0)
+            t["metal.gpu"] = (old.seconds + seconds, old.count + 1, old.faults)
+        }
+    }
+
     /// Page faults of the whole task so far (meaningful per span with one worker).
     static func faults() -> Int {
         var info = task_events_info()
