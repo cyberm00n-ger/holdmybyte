@@ -52,6 +52,16 @@ public struct SearchConstants: Sendable, Hashable {
     /// `.mosaicExact`: when no full probe passes, the first rescue probe is aimed by the model at T + this (instead of
     /// d × 0.8, which overshoots by 2–3 points); further rescue probes use d × 0.8.
     public var exactRescueMargin = 0.3
+    /// Variant "postpass" (Docs/variants/postpass.md): full-size JPEG probes are encoded with the per-component
+    /// progressive AC script estimated from the first mosaic encode of their subsampling, and JPEGs found by
+    /// DirectSearch get the lossless scan post-pass. Neither changes a coefficient, so scores are unaffected.
+    public var optimizeScans = true
+    /// Variant "postpass": layout whitespace in XMP packets (see `XMPMinify`).
+    public var xmpLayout: XMPLayout = .minifiedUnlessKeepAll
+    /// Variant "postpass": JPEGs found by DirectSearch (Social, small full-size, WebP fallback) try up to this many
+    /// rewrites that zero isolated ±1 AC coefficients (bisection over the zigzag start), each re-scored; the
+    /// smallest that still reaches the target is delivered. 0 = off.
+    public var zeroingAttempts = 4
     public init() {}
     public static let spec = SearchConstants()
 }

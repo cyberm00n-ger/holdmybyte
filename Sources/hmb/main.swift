@@ -28,7 +28,8 @@ func exitWith(_ error: any Error) -> Never {
 
 /// The live engine with its own support folder, so CLI journals never mix with the app's. `--workers N` arrives as
 /// HMB_WORKERS (exported by `CommandRunner` before this runs; Docs/DECISIONS.md D-ENG-6). HMB_MEMORY_BUDGET (bytes)
-/// overrides the engine's memory budget for tuning runs (D-ENG-7); the app never sets it.
+/// overrides the engine's memory budget for tuning runs (D-ENG-7); the app never sets it. HMB_OPTIMIZE_SCANS and
+/// HMB_XMP_LAYOUT, HMB_ZEROING and HMB_WEBP switch the post-pass variant's parts off or on for A/B runs.
 func liveEngine() throws -> LiveEngine {
     let support = FileManager.default.temporaryDirectory.appending(path: "holdmybyte-cli-\(getpid())", directoryHint: .isDirectory)
     let environment = ProcessInfo.processInfo.environment
@@ -36,7 +37,13 @@ func liveEngine() throws -> LiveEngine {
     var options = EngineOptions(workerCount: workers)
     if let budget = environment["HMB_MEMORY_BUDGET"].flatMap(Int64.init), budget > 0 { options.memoryBudget = budget }
     if let lanes = environment["HMB_ARCHIVE_LANES"].flatMap(Int.init), lanes > 0 { options.archiveConcurrency = lanes }
-    return LiveEngine(primitives: try .live(), supportDirectory: support, options: options)
+    // Variant "postpass" A/B switches (Docs/variants/postpass.md): HMB_OPTIMIZE_SCANS=0, HMB_XMP_LAYOUT=verbatim|minified,
+    // HMB_ZEROING=0, HMB_WEBP=spec.
+    if environment["HMB_OPTIMIZE_SCANS"] == "0" { options.constants.optimizeScans = false }
+    if environment["HMB_ZEROING"] == "0" { options.constants.zeroingAttempts = 0 }
+    if let layout = environment["HMB_XMP_LAYOUT"].flatMap(XMPLayout.init(rawValue:)) { options.constants.xmpLayout = layout }
+    let webp: WebPTuning = environment["HMB_WEBP"] == "spec" ? .spec : .postpass
+    return LiveEngine(primitives: try .live(webpTuning: webp), supportDirectory: support, options: options)
 }
 
 func printJSON<T: Encodable>(_ value: T) throws {
