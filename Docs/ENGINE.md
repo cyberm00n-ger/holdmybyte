@@ -548,3 +548,10 @@ high-mode results at 4:2:0 and 4:4:4. Holdout, release, all six deliveries in on
 4:4:4, +125,711 B against `.chroma444`). Every delivered JPEG ≥ target under ImageIO and libjpeg-turbo. CPU +13 %,
 wall +22 % on the six-delivery job (load 5–8); about 28 s CPU of the +34 s are the 57 full-size guard decodes
 (`.chroma444` run: 259.7 s).
+
+Tests (`swift test`, debug, env sourced, run alone, load 4–15 from other agents): 396 tests in 75 suites, two full
+runs of 680–776 s; each run had one load-sensitive failure that passes when its suite runs alone
+(`ServiceTests.estimateIsCancellable`: cancel took 4.13 s against the 4.0 s loaded budget; then
+`ComparePerformanceTests.fortyFiveMegapixelPairs`: no pair within 20 s, 3.3 s alone; the same test also failed in
+eng-v3's full runs under load). `IslowDecodeTests.matchesDjpegOnSamples` alone takes ~12 min in debug (six 45 MP
+originals and their encodes against `djpeg`).
