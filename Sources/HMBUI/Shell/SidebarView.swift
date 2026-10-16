@@ -5,36 +5,75 @@ import SwiftUI
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.locale) private var locale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isSnapshotRendering) private var isSnapshotRendering
+    /// The wedding the user last clicked in the list: it is on screen already, so selecting it does not scroll.
+    @State private var clickedID: WeddingID?
+
+    /// What to keep scrolled into view: the selected wedding and the section it sits in (a finished job moves).
+    struct RevealKey: Equatable { var id: WeddingID; var inProgress: Bool; var section: String? }
+
+    private func revealKey(_ sections: SidebarSections) -> RevealKey? {
+        guard case .wedding(let id) = model.state.selection, let record = model.record(id) else { return nil }
+        let section = sections.months.first { $0.records.contains { $0.id == id } }?.title
+        return RevealKey(id: id, inProgress: record.phase.isInProgress, section: section)
+    }
 
     var body: some View {
         let sections = SidebarSections(model.state, locale: locale)
         VStack(spacing: 0) {
-            List(selection: model.selectionBinding) {
-                NewWeddingRow().tag(SidebarSelection.newWedding)
-                if !sections.active.isEmpty {
-                    Section(Copy.Sidebar.inProgress) {
-                        ForEach(sections.active) { record in
-                            WeddingRow(record: record).tag(SidebarSelection.wedding(record.id))
+            ScrollViewReader { scroller in
+                List(selection: Binding(get: { model.state.selection }, set: { selection in
+                    clickedID = selection?.weddingID
+                    model.selectionBinding.wrappedValue = selection
+                })) {
+                    NewWeddingRow().tag(SidebarSelection.newWedding)
+                    if !sections.active.isEmpty {
+                        Section(Copy.Sidebar.inProgress) {
+                            ForEach(sections.active) { record in
+                                WeddingRow(record: record).tag(SidebarSelection.wedding(record.id))
+                            }
+                        }
+                    }
+                    ForEach(sections.months) { group in
+                        Section(group.title) {
+                            ForEach(group.records) { record in
+                                WeddingRow(record: record).tag(SidebarSelection.wedding(record.id))
+                            }
                         }
                     }
                 }
-                ForEach(sections.months) { group in
-                    Section(group.title) {
-                        ForEach(group.records) { record in
-                            WeddingRow(record: record).tag(SidebarSelection.wedding(record.id))
-                        }
+                .listStyle(.sidebar)
+                .overlay {
+                    if sections.isSearching && sections.isEmpty {
+                        ContentUnavailableView.search(text: model.state.search)
                     }
                 }
-            }
-            .listStyle(.sidebar)
-            .overlay {
-                if sections.isSearching && sections.isEmpty {
-                    ContentUnavailableView.search(text: model.state.search)
+                .contextMenu(forSelectionType: SidebarSelection.self) { items in
+                    if let id = items.first?.weddingID, let record = model.record(id) {
+                        WeddingContextMenu(record: record)
+                    }
                 }
-            }
-            .contextMenu(forSelectionType: SidebarSelection.self) { items in
-                if let id = items.first?.weddingID, let record = model.record(id) {
-                    WeddingContextMenu(record: record)
+                // The selected wedding is always on screen: when a job finishes or fails (its row moves from In Progress
+                // to its month), when Create More selects it, and when it is selected from elsewhere (Dock, menus).
+                .onChange(of: revealKey(sections), initial: true) { old, key in
+                    guard let key else { return }
+                    if key.id != clickedID { clickedID = nil }       // selected from elsewhere since the click
+                    // A click selects a visible row; only a move to another section (a job finished) scrolls then.
+                    if key.id == clickedID, old?.id == key.id, old?.section == key.section, old?.inProgress == key.inProgress { return }
+                    if key.id == clickedID, old?.id != key.id { return }
+                    Task { @MainActor in
+                        // Centred, like Finder's reveal (clamped at the list's ends): a minimal scroll stopped short
+                        // while the list was still measuring its rows. Repeated once after layout settles.
+                        for (pass, delay) in [0, 150].enumerated() {
+                            if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
+                            if isSnapshotRendering || pass > 0 {
+                                scroller.scrollTo(key.id, anchor: .center)
+                            } else {
+                                withAnimation(Tokens.Motion.standard(reduceMotion: reduceMotion)) { scroller.scrollTo(key.id, anchor: .center) }
+                            }
+                        }
+                    }
                 }
             }
             // Lifetime footer (§2.3): below the list rather than a safe-area inset, so rows never scroll under it.
@@ -51,9 +90,12 @@ struct SidebarView: View {
             }
         }
         .toolbar {
-            ToolbarItem {
-                Button { model.newWedding() } label: { Label(Copy.Toolbar.newWedding, systemImage: "plus") }
-                    .help(Copy.Toolbar.newWeddingHelp)
+            // §2.2: only while the sidebar is visible (a collapsed sidebar's items would stay in the title bar).
+            if model.state.sidebarVisible {
+                ToolbarItem {
+                    Button { model.newWedding() } label: { Label(Copy.Toolbar.newWedding, systemImage: "plus") }
+                        .help(Copy.Toolbar.newWeddingHelp)
+                }
             }
         }
     }

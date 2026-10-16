@@ -94,6 +94,8 @@ struct EditDeliveryForm: Equatable {
 }
 
 enum EditDeliveryCopy {
+    static let editTitle = "Edit Delivery"
+    static let newTitle = "New Delivery"
     static func formatTitle(_ format: OutputFormat) -> String {
         switch format {
         case .jpeg: "JPEG"

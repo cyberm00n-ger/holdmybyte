@@ -7,7 +7,8 @@
 //     replaced by a `GlassStandIn` that paints a flat, appearance-aware fill; its content view is moved into the
 //     stand-in and pinned with constraints.
 //  2. Backdrop layers and scroll-edge pockets (`CABackdropLayer`, `NSScrollPocket`) blur what lies behind them and
-//     come out as solid blocks; they are hidden.
+//     come out as solid blocks. Backdrops are hidden; a pocket becomes a `PocketStandIn`, a fade from the bar's
+//     background into the content, so rows scrolled under the toolbar do not show through the title bar.
 //  3. Vibrant text and symbols are `CATintedImage` layer contents (an A8 mask tinted by `contentsMultiplyColor`,
 //     composited with plus-lighter/plus-darker). Neither `cacheDisplay` nor `CALayer.render(in:)` draws them, so
 //     they are flattened into ordinary images with a colour that approximates the vibrant result.
@@ -142,7 +143,18 @@ enum OffscreenCapture {
     }
 
     static func replaceGlass(in view: NSView, appearance: NSAppearance) {
-        if view.className == "NSScrollPocket" { view.isHidden = true; return }
+        if view.className == "NSScrollPocket" {
+            if let parent = view.superview, view.frame.height > 0 {
+                let inGlass = sequence(first: parent, next: \.superview).contains { $0 is GlassStandIn }
+                let rect = view.convert(view.bounds, to: nil)
+                let windowHeight = view.window?.contentView?.bounds.height ?? rect.maxY
+                let standIn = PocketStandIn(frame: view.frame, barAtTop: rect.midY > windowHeight / 2, inGlass: inGlass)
+                standIn.autoresizingMask = view.autoresizingMask
+                parent.addSubview(standIn, positioned: .above, relativeTo: view)
+            }
+            view.isHidden = true
+            return
+        }
         if let layer = view.layer, NSStringFromClass(type(of: layer)).contains("Backdrop") { view.isHidden = true; return }
         if let glass = view as? NSGlassEffectView, let parent = glass.superview {
             let standIn = GlassStandIn(frame: glass.frame, cornerRadius: glass.cornerRadius)
@@ -184,9 +196,21 @@ enum OffscreenCapture {
     // MARK: Vibrancy
 
     /// Replaces `CATintedImage` contents by plain images (see the file comment). Plus-lighter text (dark) becomes
-    /// white and plus-darker text (light) black, with an opacity that keeps the label hierarchy: the primary label's
-    /// tint (0.255 / 0.749 on macOS 26) maps to 88 %.
+    /// white and plus-darker text (light) black, at the opacity that gives the blend's own result over the glass
+    /// stand-in's fill `b`: plus-darker gives `b + t − 1`, black at `(1 − t) / b` gives the same; plus-lighter gives
+    /// `b + t`, white at `t / (1 − b)` the same. (A fixed mapping of the primary tint to 88 % drew the sidebar's
+    /// secondary captions, tint 0.502 / 0.486, solid black / white: darker than the names above them.)
     static func flattenTintedContents(_ layer: CALayer, appearance: NSAppearance) {
+        var background: CGFloat = 0.5
+        appearance.performAsCurrentDrawingAppearance {
+            if let fill = GlassStandIn.fillColor.usingColorSpace(.sRGB) {
+                background = (fill.redComponent + fill.greenComponent + fill.blueComponent) / 3
+            }
+        }
+        flattenTintedContents(layer, background: background)
+    }
+
+    private static func flattenTintedContents(_ layer: CALayer, background: CGFloat) {
         if let contents = layer.contents, let object = contents as AnyObject?,
            let cls = object_getClass(object), NSStringFromClass(cls) == "CATintedImage",
            let maskObject = object.perform(NSSelectorFromString("image"))?.takeUnretainedValue(),
@@ -200,15 +224,34 @@ enum OffscreenCapture {
             let multiply = layer.value(forKey: "contentsMultiplyColor") as! CGColor?
             let tint = Self.multiplied(ownTint, multiply) ?? NSColor.labelColor.cgColor
             let filter = layer.compositingFilter as? String
-            if let flat = flatten(mask: mask, tint: tint, filter: filter) {
+            if let flat = flatten(mask: mask, tint: tint, filter: filter, background: background) {
                 layer.contents = flat
                 layer.setValue(nil, forKey: "contentsMultiplyColor")
                 if filter == "plusL" || filter == "plusD" { layer.compositingFilter = nil }
             }
         } else if let filter = layer.compositingFilter as? String, filter == "plusL" || filter == "plusD" {
+            // Plain images (SF Symbols in `ImageLayer`s: the sidebar's delivery symbols) and fills drawn with the blend:
+            // drawn normally they lose what the blend adds (a dim grey glyph that plus-lighter brightens) and all but
+            // vanished in dark.
+            // An `ImageLayer` draws its image as a mask in its `contentsMultiplyColor` (the blend's grey).
+            if let contents = layer.contents, CFGetTypeID(contents as CFTypeRef) == CGImage.typeID,
+               let multiply = layer.value(forKey: "contentsMultiplyColor") as! CGColor? {
+                layer.setValue(blendedColor(multiply, filter: filter, background: background), forKey: "contentsMultiplyColor")
+            }
+            if let fill = layer.backgroundColor { layer.backgroundColor = blendedColor(fill, filter: filter, background: background) }
             layer.compositingFilter = nil
         }
-        for sublayer in layer.sublayers ?? [] { flattenTintedContents(sublayer, appearance: appearance) }
+        for sublayer in layer.sublayers ?? [] { flattenTintedContents(sublayer, background: background) }
+    }
+
+    /// The flat colour that `color` drawn with the plus blend gives over the stand-in's fill `background`.
+    static func blendedColor(_ color: CGColor, filter: String, background: CGFloat) -> CGColor {
+        guard let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+              let c = color.converted(to: srgb, intent: .defaultIntent, options: nil)?.components, c.count == 4 else { return color }
+        let value = (c[0] + c[1] + c[2]) / 3 * c[3]                    // premultiplied
+        return filter == "plusL"
+            ? CGColor(srgbRed: 1, green: 1, blue: 1, alpha: min(1, value / max(0.05, 1 - background)))
+            : CGColor(srgbRed: 0, green: 0, blue: 0, alpha: min(1, (c[3] - value) / max(0.05, background)))
     }
 
     /// `a × b` per component in sRGB; nil when both are nil.
@@ -221,7 +264,7 @@ enum OffscreenCapture {
         return CGColor(srgbRed: ca[0] * cb[0], green: ca[1] * cb[1], blue: ca[2] * cb[2], alpha: ca[3] * cb[3])
     }
 
-    static func flatten(mask: CGImage, tint: CGColor, filter: String?) -> CGImage? {
+    static func flatten(mask: CGImage, tint: CGColor, filter: String?, background: CGFloat) -> CGImage? {
         guard let srgb = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: mask.width, height: mask.height, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: srgb, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
@@ -230,8 +273,8 @@ enum OffscreenCapture {
         let luminance = components.count >= 3 ? (components[0] + components[1] + components[2]) / 3 : components[0]
         let alpha = components.last ?? 1
         switch filter {
-        case "plusL": color = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: min(1, luminance / 0.255 * 0.88) * alpha)
-        case "plusD": color = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: min(1, (1 - luminance) / 0.251 * 0.88) * alpha)
+        case "plusL": color = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: min(1, luminance / max(0.05, 1 - background)) * alpha)
+        case "plusD": color = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: min(1, (1 - luminance) / max(0.05, background)) * alpha)
         default: color = tint
         }
         let rect = CGRect(x: 0, y: 0, width: mask.width, height: mask.height)
@@ -244,7 +287,33 @@ enum OffscreenCapture {
 
 /// Flat stand-in for a glass surface: a rounded rectangle in a fill a little off the window background, with a
 /// hairline, resolved for the view's appearance at draw time.
+/// A scroll-edge pocket's stand-in: the bar's background (the glass stand-in's fill inside the sidebar, the window
+/// background elsewhere), opaque at the bar and fading out over the pocket, like the soft scroll-edge effect.
+final class PocketStandIn: NSView {
+    let barAtTop: Bool
+    let inGlass: Bool
+
+    init(frame: CGRect, barAtTop: Bool, inGlass: Bool) {
+        self.barAtTop = barAtTop
+        self.inGlass = inGlass
+        super.init(frame: frame)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let base = inGlass ? GlassStandIn.fillColor : NSColor.windowBackgroundColor
+        guard let gradient = NSGradient(colorsAndLocations: (base, 0), (base, 0.85), (base.withAlphaComponent(0), 1)) else { return }
+        gradient.draw(in: bounds, angle: barAtTop ? 90 : -90)        // flipped: 90° runs from the top edge down
+    }
+}
+
 final class GlassStandIn: NSView {
+    static var fillColor: NSColor { NSColor.windowBackgroundColor.blended(withFraction: 0.07, of: .labelColor) ?? .windowBackgroundColor }
+
     let cornerRadius: CGFloat
 
     init(frame: CGRect, cornerRadius: CGFloat) {
@@ -258,7 +327,7 @@ final class GlassStandIn: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
-        (NSColor.windowBackgroundColor.blended(withFraction: 0.07, of: .labelColor) ?? .windowBackgroundColor).setFill()
+        Self.fillColor.setFill()
         path.fill()
         let edge = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: cornerRadius, yRadius: cornerRadius)
         edge.lineWidth = 1

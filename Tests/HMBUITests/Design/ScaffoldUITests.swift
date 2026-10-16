@@ -35,7 +35,7 @@ import Testing
         NSAppearance(named: .aqua)!.performAsCurrentDrawingAppearance { resolved = light.usingColorSpace(.sRGB) }
         #expect(abs((resolved?.redComponent ?? 0) - 11.0 / 255) < 0.01)
         NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance { resolved = light.usingColorSpace(.sRGB) }
-        #expect(abs((resolved?.greenComponent ?? 0) - 200.0 / 255) < 0.01)
+        #expect(abs((resolved?.greenComponent ?? 0) - 148.0 / 255) < 0.01)      // #15948C (Docs/DECISIONS.md)
         var environment = EnvironmentValues()
         #expect(!environment.isSnapshotRendering)
         environment.isSnapshotRendering = true

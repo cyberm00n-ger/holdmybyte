@@ -117,10 +117,10 @@ enum CompareCopy {
         }
     }
 
-    /// "Target 85 · High"; Balanced: "Target 74.6 · Balanced".
-    static func targetLine(target: Double?, quality: QualityLevel) -> String {
+    /// "Target 85 · High"; Balanced: "Target 74.6 · Balanced" (en_US) / "Target 74,6 · Balanced" (en_DE).
+    static func targetLine(target: Double?, quality: QualityLevel, locale: Locale = .current) -> String {
         guard let target else { return quality.displayName }
-        let text = target.rounded() == target ? String(Int(target)) : HMBFormat.score(target)
+        let text = target.rounded() == target ? String(Int(target)) : HMBFormat.score(target, locale: locale)
         return "Target \(text) · \(quality.displayName)"
     }
 

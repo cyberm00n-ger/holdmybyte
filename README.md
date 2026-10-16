@@ -7,6 +7,22 @@ usual deliveries in one pass: the couple's full-size package (JPEG), a website s
 
 The binding specification is [`Docs/SPEC.md`](Docs/SPEC.md).
 
+## Screenshots
+
+Rendered offscreen by `hmb-snapshot` with synthetic thumbnails (no client photos; the design review is
+[`Docs/REVIEW.md`](Docs/REVIEW.md), every state is in [`Docs/SNAPSHOTS.md`](Docs/SNAPSHOTS.md)). Glass is drawn as a
+flat stand-in offscreen.
+
+| Light | Dark |
+|---|---|
+| ![Drop a wedding](Docs/assets/screenshots/empty-light.png) | ![Drop a wedding, dark](Docs/assets/screenshots/empty-dark.png) |
+| ![Setup with estimates](Docs/assets/screenshots/setup-ready-light.png) | ![Create More Deliveries](Docs/assets/screenshots/setup-create-more-dark.png) |
+| ![Running](Docs/assets/screenshots/running-mid-light.png) | ![Running, dark](Docs/assets/screenshots/running-mid-dark.png) |
+| ![Done: the result story](Docs/assets/screenshots/done-three-light.png) | ![Done, dark](Docs/assets/screenshots/done-three-dark.png) |
+| ![Compare at 100 % with the inspector](Docs/assets/screenshots/compare-split-100-light.png) | ![Compare, split at Fit](Docs/assets/screenshots/compare-split-fit-dark.png) |
+| ![Settings: Deliveries](Docs/assets/screenshots/settings-deliveries-light.png) | ![History search](Docs/assets/screenshots/history-search-dark.png) |
+| ![Menu bar item](Docs/assets/screenshots/menubar-extra-light.png) | ![Menu bar item, dark](Docs/assets/screenshots/menubar-extra-dark.png) |
+
 ## Requirements
 
 - macOS 26 on Apple Silicon, Xcode 26 (Swift 6.2)
@@ -37,6 +53,7 @@ Release bundle, icon and audits:
 
 ```bash
 Scripts/bundle-app.sh            # build/holdmybyte.app (ad hoc signed; hmb in Contents/Helpers); --smoke launches it
+Scripts/make-icon.sh build/assets  # asset catalog only: Liquid Glass app icon + AccentColor via actool (Xcode 26)
 Scripts/check-repo.sh            # hygiene + network audit of the built binaries
 Scripts/notarize.sh              # Developer ID + notarytool (DEVELOPER_ID, NOTARY_PROFILE; owner only)
 ```

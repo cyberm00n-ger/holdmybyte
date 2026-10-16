@@ -90,7 +90,8 @@ struct FailedView: View {
 
     var body: some View {
         ContentUnavailableView {
-            Label(Copy.Failed.title(record.name), systemImage: "xmark.octagon")
+            // The title breaks before the name, never inside it.
+            Label(Copy.keepingQuotesTogether(Copy.Failed.title(record.name)), systemImage: "xmark.octagon")
         } description: {
             Text(reason)
         } actions: {

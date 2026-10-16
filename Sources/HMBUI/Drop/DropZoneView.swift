@@ -44,11 +44,22 @@ struct DropZoneView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 560)
-                Spacer().frame(height: 22)
-                Button(zone.isError ? Copy.DropError.chooseOther : Copy.Empty.choosePhotos) { model.choosePhotos() }
-                    .hmbGlassButtonStyle()
-                    .controlSize(.extraLarge)
-                    .opacity(targeted ? 0 : 1)
+                if case .error(.engineUnavailable(let reason)) = zone {
+                    Text(Copy.DropError.engineDetail(reason))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: 560)
+                        .padding(.top, Tokens.Spacing.s8)
+                } else {
+                    Spacer().frame(height: 22)
+                    Button(zone.isError ? Copy.DropError.chooseOther : Copy.Empty.choosePhotos) { model.choosePhotos() }
+                        .hmbGlassButtonStyle()
+                        .controlSize(.extraLarge)
+                        .opacity(targeted ? 0 : 1)
+                }
                 Spacer().frame(height: 28)
                 DeliveryPreviewLine()
                     .opacity(targeted ? 0 : 1)
@@ -75,7 +86,12 @@ struct DropZoneView: View {
     }
 
     @ViewBuilder private func symbol(_ zone: DropZoneState) -> some View {
-        if zone.isError {
+        if case .error(.engineUnavailable) = zone {
+            Image(systemName: "xmark.octagon")
+                .font(Tokens.Typography.dropSymbol)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Tokens.Palette.failure)
+        } else if zone.isError {
             Image(systemName: "photo.badge.exclamationmark")
                 .font(Tokens.Typography.dropSymbol)
                 .symbolRenderingMode(.hierarchical)
@@ -93,6 +109,7 @@ struct DropZoneView: View {
         switch zone {
         case .idle: Copy.Empty.title
         case .targeted(let summary): Copy.DragTarget.title(summary, locale: locale)
+        case .error(.engineUnavailable): Copy.DropError.engineTitle
         case .error: Copy.DropError.title
         }
     }
@@ -103,6 +120,7 @@ struct DropZoneView: View {
         case .targeted: Copy.DragTarget.subtitle
         case .error(.onlyRaw(let name, let count)): Copy.DropError.onlyRaw(folderName: name, count: count, locale: locale)
         case .error(.noPhotos): Copy.DropError.noPhotos
+        case .error(.engineUnavailable): Copy.DropError.engineMessage
         }
     }
 }

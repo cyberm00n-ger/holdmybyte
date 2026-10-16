@@ -223,7 +223,7 @@ final class CompareCanvasView: NSView {
 
     override func cursorUpdate(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if let x = plan?.dividerX, abs(point.x - x) <= 6 {
+        if plan?.isOnDivider(point) == true {
             NSCursor.columnResize.set()
         } else if compare?.zoom == .actual {
             NSCursor.openHand.set()
@@ -241,14 +241,14 @@ final class CompareCanvasView: NSView {
             return
         }
         guard let compare else { return }
-        if let x = plan?.dividerX, abs(point.x - x) <= 6 {
+        if plan?.isOnDivider(point) == true {
             drag = .divider
         } else if compare.zoom == .actual {
             drag = .pan(start: point, center: compare.zoomCenter)
             NSCursor.closedHand.set()
         } else if plan?.dividerX != nil {
             drag = .divider                                    // at Fit, dragging anywhere moves the divider
-            onDivider(Double(point.x / max(1, bounds.width)))
+            if let fraction = plan?.dividerFraction(atX: point.x) { onDivider(fraction) }
         } else {
             drag = nil
         }
@@ -259,7 +259,7 @@ final class CompareCanvasView: NSView {
         cursor = point
         switch drag {
         case .divider:
-            onDivider(Double(point.x / max(1, bounds.width)))
+            if let fraction = plan?.dividerFraction(atX: point.x) { onDivider(fraction) }
         case .pan(let start, let center):
             guard let geometry else { return }
             onCenter(geometry.panned(center, by: CGSize(width: point.x - start.x, height: point.y - start.y)))

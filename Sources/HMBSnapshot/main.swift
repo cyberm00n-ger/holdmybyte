@@ -9,7 +9,7 @@
 //   HMB_FIXTURE_PHOTOS       optional folder of local photos used as thumbnails
 //
 //   hmb-snapshot --list               print the catalogue ids
-//   hmb-snapshot --render-icon DIR    write the placeholder app icon as an .iconset (Scripts/make-icon.sh)
+//   hmb-snapshot --render-assets DIR  write AppIcon.icon and Assets.xcassets (AccentColor) for actool (Scripts/make-icon.sh)
 //   hmb-snapshot --self-test [DIR]    check the capture pipeline on a probe view (no app views needed)
 //
 // Exit status: 0 when every image rendered and none is blank; 1 otherwise; 64 for usage errors.
@@ -39,14 +39,14 @@ switch arguments.first {
 case "--list":
     for entry in StateCatalogue.entries { print(entry.id) }
     exit(0)
-case "--render-icon":
-    guard arguments.count == 2 else { fail("usage: hmb-snapshot --render-icon <dir.iconset>") }
-    do { try AppIconArt.writeIconset(to: URL(fileURLWithPath: arguments[1], isDirectory: true)) } catch { fail("\(error)", status: 1) }
+case "--render-assets":
+    guard arguments.count == 2 else { fail("usage: hmb-snapshot --render-assets <dir>") }
+    do { try AppIconArt.writeAssetSources(to: URL(fileURLWithPath: arguments[1], isDirectory: true)) } catch { fail("\(error)", status: 1) }
     exit(0)
 case "--self-test":
     guard arguments.count <= 2 else { fail("usage: hmb-snapshot --self-test [dir]") }
 case "-h", "--help":
-    print("usage: hmb-snapshot [--list | --render-icon <dir> | --self-test [dir]]; configure with HMB_SNAPSHOT* variables (Docs/SNAPSHOTS.md)")
+    print("usage: hmb-snapshot [--list | --render-assets <dir> | --self-test [dir]]; configure with HMB_SNAPSHOT* variables (Docs/SNAPSHOTS.md)")
     exit(0)
 case .some(let other):
     fail("unknown argument \(other)")

@@ -84,6 +84,12 @@ public enum Fixtures {
         .archive: DeliveryEstimate(bytes: 8_560_000_000, fractionOfSource: 0.782, secondsPerPhoto: 0.35),
     ]
 
+    /// What the setup's default deliveries (Couple + Website) need in total, as Preflight reports it: the sum of
+    /// their estimates (1.56 GB, the bottom bar's "≈ 1.56 GB in total").
+    public static var defaultDeliveriesBytes: Int64 {
+        [DeliveryID.couple, .website].compactMap { estimates[$0]?.bytes }.reduce(0, +)
+    }
+
     // MARK: Variants
 
     /// Photos 42 and 208 (indices 41, 207) are unreadable in every delivery; photo 319 (index 318) failed to encode

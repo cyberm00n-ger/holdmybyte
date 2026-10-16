@@ -61,6 +61,7 @@ struct DoneToolbar: ToolbarContent {
             } label: {
                 Label(Copy.Toolbar.more, systemImage: "ellipsis")
             }
+            .hmbMenuLabelTint()
             .help(Copy.Toolbar.moreHelp)
         }
     }
@@ -82,12 +83,12 @@ struct ResultHeader: View {
             if issues > 0 {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(Tokens.Typography.doneSeal)
-                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(Tokens.Palette.warning)
             } else if appeared || skipsAnimation {
+                // Monochrome (§2.4 S10): a solid seal in the accent with the check cut out. Hierarchical drew a pale
+                // seal that read as disabled beside the title (and muddy in dark).
                 Image(systemName: "checkmark.seal.fill")
                     .font(Tokens.Typography.doneSeal)
-                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.tint)
                     .transition(.symbolEffect(.drawOn))
             } else {
@@ -158,10 +159,11 @@ struct IssuesCard: View {
         }
         .cardSurface()
         .overlay(alignment: .leading) {
-            UnevenRoundedRectangle(topLeadingRadius: Tokens.Radius.tile, bottomLeadingRadius: Tokens.Radius.tile, style: .continuous)
-                .fill(Tokens.Palette.warning)
-                .frame(width: 3)
+            // The 3 pt orange leading edge follows the card's corners: a 3 pt-wide rounded shape clamps its radii to
+            // 1.5 pt, so the edge ran straight past the card's rounded corners.
+            Rectangle().fill(Tokens.Palette.warning).frame(width: 3)
         }
+        .clipShape(Tokens.Radius.shape(Tokens.Radius.tile))
     }
 }
 
@@ -216,7 +218,7 @@ struct MissingFolderBanner: View {
 
     var body: some View {
         StatusBanner(symbol: "folder.badge.questionmark", title: Copy.MissingFolder.title,
-                     message: Copy.MissingFolder.message(record.outputFolder)) {
+                     message: Copy.MissingFolder.message(record.outputFolder, home: model.platform.homeDirectory)) {
             Button(Copy.MissingFolder.locate) { model.locateFolder(record.id) }
                 .hmbNeutralButtonTint()
             Button(Copy.MissingFolder.removeFromHistory) { model.requestRemoveFromHistory(record.id) }
@@ -344,7 +346,7 @@ struct DeliveryTile: View {
 
     private var proofLine: String {
         if preset.format == .jxlLossless { return Copy.Done.archiveProofLine }
-        return Copy.Done.proofLine(quality: preset.quality, lowest: summary.minScore)
+        return Copy.Done.proofLine(quality: preset.quality, lowest: summary.minScore, locale: locale)
     }
 
     private var sizeLine: String {
@@ -440,7 +442,7 @@ struct ProofCard: View {
             Text(Copy.Done.proofTitle(met: presentation.metTarget(delivery), total: summary.delivered, locale: locale))
                 .font(.headline)
             if let lo = summary.minScore, let median = summary.medianScore, let hi = summary.maxScore {
-                Text(Copy.Done.proofDetail(lowest: lo, median: median, highest: hi))
+                Text(Copy.Done.proofDetail(lowest: lo, median: median, highest: hi, locale: locale))
                     .font(.callout).foregroundStyle(.secondary).monospacedDigit()
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -490,19 +492,20 @@ struct TintedIconLabelStyle: LabelStyle {
 struct ProofThumb: View {
     let photo: SourcePhoto
     let score: Double
+    @Environment(\.locale) private var locale
 
     var body: some View {
         ThumbnailView(photo: photo)
             .frame(width: Tokens.Layout.proofThumb.width, height: Tokens.Layout.proofThumb.height)
             .clipShape(Tokens.Radius.shape(Tokens.Radius.thumbnail))
             .overlay(alignment: .bottomTrailing) {
-                Text(HMBFormat.score(score))
+                Text(HMBFormat.score(score, locale: locale))
                     .font(.caption2.monospacedDigit())
                     .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .hmbMaterial(.ultraThinMaterial, in: Capsule())
                     .padding(4)
             }
-            .accessibilityLabel("\(photo.relativePath), score \(HMBFormat.score(score))")
+            .accessibilityLabel("\(photo.relativePath), score \(HMBFormat.score(score, locale: locale))")
     }
 }
 
@@ -512,6 +515,7 @@ struct ScoreHistogram: View {
     let floor: Double?
     let band: ClosedRange<Double>?
     let median: Double?
+    @Environment(\.locale) private var locale
 
     struct Bin: Identifiable { let start: Double; let count: Int; var id: Double { start } }
 
@@ -534,7 +538,7 @@ struct ScoreHistogram: View {
                     .lineStyle(StrokeStyle(lineWidth: 1.5))
                     .foregroundStyle(.tint)
                     .annotation(position: .top, alignment: .leading) {
-                        Text(HMBFormat.score(floor)).font(.caption).foregroundStyle(.secondary)
+                        Text(HMBFormat.score(floor, locale: locale)).font(.caption).foregroundStyle(.secondary)
                     }
             }
         }
@@ -542,11 +546,11 @@ struct ScoreHistogram: View {
         .chartXAxis {
             AxisMarks(values: Self.ticks(lo: lo, hi: hi)) { value in
                 AxisGridLine().foregroundStyle(.clear)
-                AxisValueLabel { if let v = value.as(Double.self) { Text(HMBFormat.score(v)).monospacedDigit() } }
+                AxisValueLabel { if let v = value.as(Double.self) { Text(HMBFormat.score(v, locale: locale)).monospacedDigit() } }
             }
         }
         .chartYAxis(.hidden)
-        .accessibilityChartDescriptor(HistogramDescriptor(scores: scores, floor: floor, median: median))
+        .accessibilityChartDescriptor(HistogramDescriptor(scores: scores, floor: floor, median: median, locale: locale))
     }
 
     nonisolated static func bins(_ scores: [Double]) -> [Bin] {
@@ -575,15 +579,17 @@ struct HistogramDescriptor: AXChartDescriptorRepresentable {
     let scores: [Double]
     let floor: Double?
     let median: Double?
+    let locale: Locale
 
     func makeChartDescriptor() -> AXChartDescriptor {
         var counts: [Double: Int] = [:]
         for score in scores { counts[(score * 2).rounded(.down) / 2, default: 0] += 1 }
         let bins = counts.keys.sorted().map { (start: $0, count: counts[$0] ?? 0) }
         let lowest = scores.min() ?? 0
-        let summary = Copy.Done.histogramSummary(photos: scores.count, lowest: lowest, median: median ?? lowest, floor: floor)
+        let summary = Copy.Done.histogramSummary(photos: scores.count, lowest: lowest, median: median ?? lowest, floor: floor,
+                                                 locale: locale)
         let x = AXNumericDataAxisDescriptor(title: "Score", range: (bins.first?.start ?? 0)...((bins.last?.start ?? 0) + 0.5),
-                                            gridlinePositions: []) { HMBFormat.score($0) }
+                                            gridlinePositions: []) { HMBFormat.score($0, locale: locale) }
         let y = AXNumericDataAxisDescriptor(title: "Photos", range: 0...Double(bins.map(\.count).max() ?? 1),
                                             gridlinePositions: []) { "\(Int($0)) photos" }
         let series = AXDataSeriesDescriptor(name: "Scores", isContinuous: false,
@@ -633,6 +639,7 @@ struct GridHeader: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .fixedSize()
+                .hmbMenuLabelTint()                           // the accent is not for menus (§2.5)
             }
             Menu {
                 Picker(selection: $model.state.gridSort) {
@@ -646,6 +653,7 @@ struct GridHeader: View {
             }
             .menuStyle(.button)
             .fixedSize()
+            .hmbMenuLabelTint()
             .help(Copy.Done.sortHelp)
             if presentation.issuePhotoCount > 0 {
                 Toggle(Copy.Done.issuesOnly, isOn: $model.state.issuesOnly).toggleStyle(.checkbox)

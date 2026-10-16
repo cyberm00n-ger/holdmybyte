@@ -32,36 +32,3 @@ extension AppModel {
                         thumbnails: DiskThumbnailCache(directory: StoreLocations.thumbnails))
     }
 }
-
-/// Used when the live engine cannot start (e.g. the Metal device or the codecs are unavailable): every scan fails,
-/// so a drop shows "No photos found" rather than pretending to work; nothing is ever written.
-final class UnavailableEngine: EngineService {
-    struct Unavailable: Error, CustomStringConvertible { let description: String }
-    let reason: String
-    init(reason: String) { self.reason = reason }
-
-    func scan(_ items: [URL]) -> AsyncThrowingStream<ScanUpdate, any Error> {
-        let reason = reason
-        return AsyncThrowingStream { $0.finish(throwing: Unavailable(description: reason)) }
-    }
-    func estimate(photos: [SourcePhoto], deliveries: [DeliveryPreset]) async throws -> [DeliveryID: DeliveryEstimate] {
-        throw Unavailable(description: reason)
-    }
-    func preflight(_ request: JobRequest) async -> Preflight {
-        Preflight(outputFolder: request.outputFolder, estimatedBytes: nil, notices: [.notWritable(volume: request.outputFolder.lastPathComponent)])
-    }
-    func run(_ request: JobRequest, resume: Bool) -> AsyncStream<EngineEvent> {
-        let reason = reason
-        return AsyncStream { continuation in
-            continuation.yield(.phase(request.wedding, .failed(reason: reason)))
-            continuation.finish()
-        }
-    }
-    func pause(_ wedding: WeddingID) async {}
-    func stop(_ wedding: WeddingID) async {}
-    func unfinishedJobs() async -> [UnfinishedJob] { [] }
-    func discardJournal(_ wedding: WeddingID) async {}
-    func comparePair(record: WeddingRecord, photo: PhotoID, delivery: DeliveryID, maxPixelSize: Int?) async throws -> ComparePair {
-        throw Unavailable(description: reason)
-    }
-}

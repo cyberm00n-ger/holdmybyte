@@ -33,9 +33,9 @@ struct PhotoInspector: View {
                         Text("Kept as original").font(Tokens.Typography.title)
                         Text("Already as small as this quality allows.").font(.caption).foregroundStyle(.secondary)
                     } else {
-                        Text(result?.score.map(HMBFormat.score) ?? "–")
+                        Text(result?.score.map { HMBFormat.score($0, locale: locale) } ?? "–")
                             .font(Tokens.Typography.counter).monospacedDigit()
-                        Text(CompareCopy.targetLine(target: result?.target, quality: preset.quality))
+                        Text(CompareCopy.targetLine(target: result?.target, quality: preset.quality, locale: locale))
                             .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                     }
                     if let edge = pair?.comparedAtLongEdge ?? preset.size.longEdge {
@@ -44,7 +44,9 @@ struct PhotoInspector: View {
                 }
             }
             Section("Size") {
-                LabeledContent("Original", value: "\(HMBFormat.bytes(photo.byteCount, locale: locale)) · \(photo.pixelWidth) × \(photo.pixelHeight)")
+                // Size and pixels on their own rows: together they wrapped under the label at the inspector's 260 pt.
+                LabeledContent("Original", value: HMBFormat.bytes(photo.byteCount, locale: locale))
+                LabeledContent("Pixels", value: "\(photo.pixelWidth) × \(photo.pixelHeight)")
                 LabeledContent("Delivered", value: deliveredText)
                 LabeledContent("Saved", value: savedText)
             }
@@ -55,7 +57,7 @@ struct PhotoInspector: View {
                     LabeledContent("Chroma", value: result?.chroma?.rawValue ?? "–")
                     LabeledContent("Colour", value: colourText)
                     LabeledContent("Metadata", value: CompareCopy.metadataText(preset.metadata))
-                    LabeledContent("Time", value: result.map { String(format: "%.2f s", locale: Locale(identifier: "en_US_POSIX"), $0.seconds) } ?? "–")
+                    LabeledContent("Time", value: result.map { HMBFormat.preciseSeconds($0.seconds, locale: locale) } ?? "–")
                 }
             }
             Section {
@@ -65,6 +67,7 @@ struct PhotoInspector: View {
                 }
                 .disabled(deliveredURL == nil)
             }
+            .hmbNeutralButtonTint()
         }
         .formStyle(.grouped)
     }

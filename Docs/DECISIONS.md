@@ -190,3 +190,70 @@ Both are reported (Docs/ENGINE.md §8, Docs/BENCHMARKS.md). **Result** (wedding 
 class): peak RSS 18.82 → **7.18 GB**, footprint 19.55 → **7.42 GB**, wall 513.6 → 564.4 s (+9.9 %); all 2140 outputs
 SHA-256-identical to the baseline build, sources unchanged. Without (e), otherwise the same code, the peak was 8.22 GB
 footprint / 7.34 GB RSS (8.04 / 7.31 GB one step earlier), so the app needs the follow-up to stay under 8 GB.
+
+## 2026-10-15 · app polish (branch `polish-app`)
+
+- **[app] Accent in AppKit.** The bundle carries an asset catalog compiled by actool (`Scripts/make-icon.sh`, called by
+  `bundle-app.sh`): `AccentColor` (from `Tokens.Palette.accentMulticolorHex`, the single source) and the app icon.
+  Info.plist names `NSAccentColorName` and `CFBundleIconName`, so alert default buttons, open panels and menus use the
+  teal accent when the system accent is Multicolor (macOS applies an app accent only then, as §2.5 wants). The SwiftUI
+  root `.tint` stays (it also drives `swift run` and the harness, which has no bundle; its NSAlert default button gets
+  the accent as `bezelColor`). `bundle-app.sh` fails unless `assetutil` lists both assets.
+- **[app] Dark accent #15948C (§2.5 deviation, was #3CC8BF).** White text on the prominent button and the alert
+  default button was 2.1 : 1 on #3CC8BF. #15948C has the system blue's dark-mode profile (3.7 : 1 under white text,
+  4.5 : 1 on the dark window). Light stays #0B7F7B.
+- **[app] App icon.** Drawn in code (`AppIconArt`): a photo print held between two square brackets ("hold my byte"),
+  white layers on a teal gradient. Written as an Icon Composer `.icon` and compiled by actool, so macOS 26 renders it
+  as Liquid Glass with its dark, clear and tinted variants; actool also writes the `.icns` fallback. Replaces the
+  "print in front of a glass slab" placeholder (§2.5 v1 placeholder); Icon Composer art by hand stays a non-goal.
+- **[app] Compare divider.** The line spans only the visible photo (the letterbox, the band under the toolbar and the
+  area below a Fit photo are excluded; at 100 % it runs from the toolbar edge down, under the HUD). The divider
+  fraction is relative to that photo span, not the view, so 0 % and 100 % are the photo's edges; the canvas clip, the
+  SwiftUI line and the hit test share `CompareCanvasPlan`.
+- **[app] Number formatting.** Scores use the locale's decimal separator like the sizes beside them ("75,0" next to
+  "25,7 MB" in en_DE) through `HMBFormat.score(_:locale:)` (HMBUI extension); the CLI keeps the POSIX
+  `HMBFormat.score(_:)`. Inspector seconds likewise (`HMBFormat.preciseSeconds`).
+- **[app] Sidebar reveal.** The selected wedding is scrolled into view whenever it is selected from outside the list
+  (Create More, Dock, menus) or moves to another section (a job finishes or fails); a click on a visible row does not
+  scroll. The row is centred (clamped at the list ends, like Finder's reveal); a minimal scroll stopped short while
+  the list was still measuring rows. The scroll repeats once after 150 ms.
+- **[app] `+` in the sidebar toolbar** only while the sidebar is visible (§2.2); collapsed, SwiftUI kept it in the
+  title bar.
+- **[app] Engine that cannot start.** `UnavailableEngine` moved to HMBUI and throws `EngineUnavailableError`; a drop
+  then shows `DropError.engineUnavailable(reason:)` ("holdmybyte can’t compress right now", with the reason as a
+  detail line, no Choose button, no auto-reset) instead of "No photos found". `DropError` (§5.0.2, frozen) gains this
+  case.
+- **[app] Edit Delivery title.** The sheet shows "Edit Delivery" / "New Delivery" top leading; the sheet is 500 × 600
+  (§2.4 S6's 560 plus the title) so every field shows without scrolling. The Symbol menu draws in the label colour
+  (a value, not an accent element); toolbar and HUD menus (Delivery, Zoom, More, order) likewise.
+- **[app] Titles keep quoted names together.** Alert titles and the failed title use non-breaking spaces inside
+  “…” (`Copy.keepingQuotesTogether`), so "Couldn’t compress “Finn und Lissy”" wraps before the name.
+- **[app] Fixture consistency.** `setup-blocked-disk` needs `Fixtures.defaultDeliveriesBytes` (1,56 GB, the sum of the
+  estimates, as Preflight computes it), matching the bottom bar.
+- **[harness] Fidelity.** `hmbGlass`/`hmbMaterial` fall back to a flat, nearly opaque stand-in with a hairline (a
+  material over a photo vanished offscreen); scroll pockets become a fade from the bar's background (rows scrolled
+  under the title bar showed through); sheets are captured without the 32 pt title bar an unattached sheet window has.
+
+### Final design review (2026-10-16, `polish-app`)
+
+- **[app] Done seal and issues triangle are solid.** `checkmark.seal.fill` in the accent and
+  `exclamationmark.triangle.fill` in orange use the default (monochrome) rendering, as §2.4 S10/S11 write them; the
+  hierarchical rendering drew a pale seal that read as disabled next to the 26 pt title, and a muddy one in dark.
+- **[app] Issues card edge.** The 3 pt orange leading edge is a plain rectangle clipped by the card's 16 pt continuous
+  shape. A 3 pt-wide rounded shape clamps its radii, so the edge ran straight past the card's rounded corners.
+- **[app] Grid header menus** (delivery picker, sort menu) draw in the label colour, like the toolbar menus (accent is
+  not for menus, §2.5).
+- **[app] Inspector size rows** (§2.4 S14 deviation): `Original 25.7 MB` and `Pixels 9504 × 6336` are two rows. As one
+  value ("25.7 MB · 9504 × 6336") it wrapped under its label at the inspector's 260 pt.
+- **[app] "Last seen at ~/…"** (S12) abbreviates with `AppPlatform.homeDirectory` (the user's home in the app; the
+  fixtures' home in the harness, so the banner shows `~/Weddings/…` as specified instead of `/Users/sebastian/…`).
+- **[harness] Vibrancy by blend, not by a fixed ratio.** Flattened plus-darker / plus-lighter content is drawn black /
+  white at the opacity that gives the blend's own result over the glass stand-in's fill `b`: `(1 − t) / b` and
+  `t / (1 − b)`. The old mapping (primary tint → 88 %) clamped the sidebar's secondary captions (tint 0.502 light,
+  0.486 dark) to solid black / white, so dates and counts were darker than the names above them and the lifetime
+  footer read as primary. SF Symbol `ImageLayer`s and fills drawn with the blend get the same treatment through their
+  `contentsMultiplyColor` / background colour; before, the sidebar's delivery symbols nearly vanished in dark (65 on
+  51).
+
+### D-LEAD-1 · App gets MallocLargeCache=0 via LSEnvironment
+The engine's memory plan keeps the app under 8 GB only when malloc returns large freed blocks (D-ENG-10). The CLI re-execs itself with the variable; the app gets it from Info.plist `LSEnvironment`, set in `Scripts/bundle-app.sh`. G7 is reported as both peak RSS and peak footprint; footprint is the number macOS uses for memory pressure.

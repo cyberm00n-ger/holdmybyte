@@ -34,8 +34,9 @@ average before and after, macOS) and `index.html`, a contact sheet with light an
 Exit status: 0 when every image rendered and none is blank (> 99 % of pixels one colour); 1 otherwise; 64 for usage
 errors.
 
-Other modes: `hmb-snapshot --list` prints the catalogue ids; `--render-icon <dir.iconset>` draws the placeholder app
-icon (used by `Scripts/make-icon.sh`); `--self-test [dir]` renders a probe view with a glass sidebar, toolbar
+Other modes: `hmb-snapshot --list` prints the catalogue ids; `--render-assets <dir>` writes the app icon (an Icon Composer
+`AppIcon.icon`, drawn in `AppIconArt`) and `Assets.xcassets` with the `AccentColor`, which `Scripts/make-icon.sh`
+compiles with actool; `--self-test [dir]` renders a probe view with a glass sidebar, toolbar
 platter, vibrant sidebar text, a sheet, materials, the glass-button fallback and a CALayer-backed NSView in both
 appearances and checks the pixels where each must show.
 
@@ -57,14 +58,19 @@ composites is not available that way, so before each capture the harness rewrite
 |---|---|---|
 | Liquid Glass (`NSGlassEffectView`: sidebar, toolbar platters) | opaque white, hides its content | a flat stand-in (window background blended 7 % toward the label colour, hairline, same corner radius); the glass's content view moves into it |
 | `CABackdropLayer`, `NSScrollPocket` (blur behind bars, scroll-edge effect) | solid blocks | hidden |
-| Vibrant text and symbols (`CATintedImage` contents, plus-lighter / plus-darker) | not drawn at all | flattened to plain images in the image's own `tint` × the layer's `contentsMultiplyColor`; plus-lighter/darker text at 88 % white (dark) / black (light), secondary proportionally |
+| Vibrant text and symbols (`CATintedImage` contents, plus-lighter / plus-darker) | not drawn at all | flattened to plain images in the image's own `tint` × the layer's `contentsMultiplyColor`; plus-lighter/darker content (text, `ImageLayer` symbols, fills) as white / black at the opacity that reproduces the blend over the glass stand-in's fill `b`: `t / (1 − b)` and `(1 − t) / b` |
 | Glass content moved into the stand-in | constraints to views outside the glass are lost (the search field shrank to a sliver) | frames that changed are pinned back |
 | Inactive window look (offscreen windows are never key) | grey traffic lights, grey default buttons and selection | the harness process reports the app active and every window key and main |
 | Sheets (`.sheet`) | a separate `SheetPresentationWindow` that never attaches to an invisible parent | captured separately and composited centred under the toolbar with a shadow |
-| `hmbGlass` / `hmbGlassButtonStyle` | (WP0) fall back to `.regularMaterial` / `.bordered(Prominent)` under `isSnapshotRendering` | none needed; materials render |
+| `hmbGlass` / `hmbMaterial` (HUD, side labels, knob, toasts, score capsules, grid badges) | a material draws without its blur, so a capsule over a photo vanished and its text sat on the photo | a flat stand-in under `isSnapshotRendering`: window background at 90 %, hairline, soft shadow |
+| `hmbGlassButtonStyle` | (WP0) `.bordered(Prominent)` under `isSnapshotRendering` | none needed |
+| Scroll-edge pocket (`NSScrollPocket`) | a solid block; hidden, rows scrolled under the title bar showed through | a fade from the bar's background (the glass stand-in's fill in the sidebar) |
+| Sheet window title bar | an unattached sheet is a titled window: a 32 pt empty band above the sheet | only the sheet's content view is captured |
+| NSAlert default button | the harness is no app bundle, so no `AccentColor` asset: system blue | the default button's `bezelColor` is the accent (the bundle gets it from `NSAccentColorName`) |
 
-Consequences for review: glass surfaces are flat, vibrancy is approximated (sidebar text contrast is close to, not
-exactly, the real one), and there is no desktop behind the window. Layout, copy, typography, symbols, colours and
+Consequences for review: glass surfaces are flat, vibrancy is modelled over the flat stand-in (plus-darker /
+plus-lighter text, symbols and fills drawn at the opacity that gives the blend's result over the stand-in's fill, so
+the sidebar keeps its name / caption / header hierarchy; not blurred like the real material), and there is no desktop behind the window. Layout, copy, typography, symbols, colours and
 accent use are exact. Animations do run offscreen (measured: a 0.6 s ease-out finishes after ≈ 0.7 s), hence the
 0.7 s settle time.
 
@@ -84,6 +90,11 @@ below was not repeated locked; over SSH the process must run in the user's GUI s
 | 2026-10-15 | `int-app` (all packages merged), release, settle 0.7 s | 92 (42 ids × 2 + 4 × 2) | 102.5 s | 18.41 17.36 17.95 → 15.51 16.64 17.60 (Lightroom and builds running) | exit 0, 0 blank (largest one-colour share 92.2 %); reviewed below |
 | 2026-10-15 | `int-app` verification, before fixes, release | 92 | 94.7 s | 14.58 29.72 30.25 → 8.48 23.56 27.81 | exit 0; 30 PNGs reviewed (both appearances, 780×560): teal secondary buttons, truncated sidebar names, cramped tile footers, "533 of 535 met their target" |
 | 2026-10-15 | `int-app` verification, after fixes, release | 92 | 96.9 s | 6.80 17.01 23.66 → 5.29 13.65 21.61 | exit 0, 0 blank; the four defects above fixed (Docs/DECISIONS.md) |
+| 2026-10-15 | `polish-app` baseline, debug | 92 | 141.9 s | 12.59 14.72 14.22 → 13.71 13.44 13.70 | exit 0; reviewed: divider through letterbox/HUD, sidebar row off screen, empty band over Edit Delivery, "75.0" beside "25,7 MB", teal menus |
+| 2026-10-15 | `polish-app` final, release, settle 0.7 s | 92 (42 ids × 2 + 4 × 2) | 107.5 s | 16.02 16.55 16.74 → 11.41 14.59 15.93 (shared machine, builds running) | exit 0, 0 blank (largest one-colour share 92.2 %); every PNG reviewed, light and dark, after three fix rounds (Docs/DECISIONS.md "app polish") |
+| 2026-10-16 | `polish-app` final review, before fixes, release | 92 | 101.2 s | 6.23 8.32 12.99 → 5.27 7.26 11.98 | exit 0; every PNG reviewed (Docs/REVIEW.md): pale hierarchical seal, orange issues edge past the card corners, teal grid menus, inspector size row wrapping, `/Users/sebastian/…` in S12, sidebar captions solid black/white and delivery symbols invisible in dark (harness vibrancy) |
+| 2026-10-16 | `polish-app` final review, after fixes, release | 92 | 101.7 s | 5.61 5.66 8.13 → 5.66 5.61 7.82 | exit 0, 0 blank; the defects above fixed and re-checked in both appearances |
+| 2026-10-16 | curated README set (`Docs/assets/screenshots/`), release, no `HMB_FIXTURE_PHOTOS` | 28 (10 ids) | 32.6 s | 6.61 9.20 9.12 | synthetic thumbnails, so no client photo is committed; downscaled to ≤ 1120 px wide, each < 500 KB |
 
 ## Review checklist (§6.3)
 
@@ -94,16 +105,16 @@ elements · dark mode legible, no hard-coded colours · the 780×560 renders wit
 |---|---|---|---|---|---|
 | `empty` | S1 | pass | pass |  |  |
 | `empty-error-raw` | S2 | pass | pass |  |  |
-| `empty-error-none` | S2 | pass | pass |  |  |
+| `empty-error-none` | S2 | pass | pass |  | engine-start failures now show their own error (not this state; covered by DropTests) |
 | `drag-target` | S3 | pass | pass |  |  |
 | `preparing` | S4 | pass | pass |  | scan shimmer in the mosaic and estimate column |
 | `setup-ready` | S4 | pass | pass | pass | notices now sit under the header; bottom bar opaque offscreen |
 | `setup-estimating` | S4 | pass | pass |  |  |
 | `setup-warn-precompressed` | S5 | pass | pass |  |  |
-| `setup-blocked-disk` | S5 | pass | pass |  | the block is visible next to the disabled button (was below the fold) |
+| `setup-blocked-disk` | S5 | pass | pass |  | 1,56 GB needed, as in the bottom bar (was 1,9 GB) |
 | `setup-create-more` | S4, F3 | pass | pass |  | was the empty drop zone (wrong selection in the harness) |
 | `drop-on-setup` | S3 | pass | pass |  |  |
-| `edit-delivery` | S6 | pass | pass |  | WP4's sheet, composited; "Size" and "px" were white (tint fix) |
+| `edit-delivery` | S6 | pass | pass |  | WP4's sheet, composited without the unattached title bar; title "Edit Delivery"; symbol menu in the label colour |
 | `queued` | S7 | pass | pass |  |  |
 | `running-early` | S8 | pass | pass |  | queued/working cells greyscale (saturation filter does not render offscreen) |
 | `running-mid` | S8 | pass | pass | pass | progress bar teal (was the system blue: `.tint(nil)`); sidebar counts no longer truncate at 780 |
@@ -112,14 +123,14 @@ elements · dark mode legible, no hard-coded colours · the 780×560 renders wit
 | `paused-disk` | S9 | pass | pass |  |  |
 | `stopped` | S9 | pass | pass |  |  |
 | `interrupted` | S9 | pass | pass |  |  |
-| `done-single` | S10 | pass | pass |  | one tile spans the width |
+| `done-single` | S10 | pass | pass |  | one tile spans the width; scores "74,0" (locale); selected row scrolled into view |
 | `done-three` | S10 | pass | pass | pass | tiles fill the row (3 → 3 columns; 2 × 2 at 780); size lines wrap instead of truncating |
 | `done-issues` | S11 | pass | pass |  |  |
 | `done-kept-original` | S10 | pass | pass |  | showed done-issues' issues before (presentation memo); now the kept-original note |
 | `done-missing-folder` | S12 | pass | pass |  | banner shown (harness marks the folder missing); Compare/Finder/Spot-Check disabled |
-| `failed` | S13 | pass | pass |  |  |
-| `compare-split-fit` | S14 | pass | pass | pass | the photo was missing (pair not preloaded); duplicate title removed |
-| `compare-split-100` | S14 | pass | pass |  | inspector beside the canvas; capture date in the app's date style |
+| `failed` | S13 | pass | pass |  | title breaks before the quoted name; selected row in view |
+| `compare-split-fit` | S14 | pass | pass | pass | divider only across the photo (not the letterbox, toolbar band or HUD); HUD and toast above it |
+| `compare-split-100` | S14 | pass | pass |  | inspector beside the canvas; divider from the toolbar edge down; inspector buttons neutral; "Target 74,7" |
 | `compare-side` | S14 | pass | pass |  |  |
 | `compare-original-held` | S14 | pass | pass |  |  |
 | `compare-diff` | S14 | pass | pass |  |  |
@@ -131,22 +142,21 @@ elements · dark mode legible, no hard-coded colours · the 780×560 renders wit
 | `settings-deliveries` | S16 | pass | pass |  |  |
 | `settings-advanced` | S16 | pass | pass |  |  |
 | `menubar-extra` | S17 | pass | pass |  | laid out like the menu (AppKit draws the real one) |
-| `alert-stop` | S9, S18 | pass | pass |  | copy from `AppAlert.copy` |
+| `alert-stop` | S9, S18 | pass | pass |  | copy from `AppAlert.copy`; default button in the accent; quoted name kept on one line |
 | `alert-quit` | S18 | pass | pass |  |  |
-| `alert-remove` | §2.3, S18 | pass | pass |  | Cancel default, Remove destructive |
+| `alert-remove` | §2.3, S18 | pass | pass |  | Cancel default (accent), Remove destructive |
 
-Reviewed on 2026-10-15 (run above) by the integration lead, every PNG against §2 (layout, copy, symbols, tokens, light
+Re-reviewed on 2026-10-15 on `polish-app` (final run above), every PNG in both appearances and at 780×560;
+originally reviewed (int-app run) by the integration lead, every PNG against §2 (layout, copy, symbols, tokens, light
 and dark). Defects found and fixed are in the notes and in `Docs/DECISIONS.md`.
 
 **Known limits of the offscreen renders** (the app is right; verified against a window-server capture):
 - the sidebar search field's text is not drawn (the clear button shows that it has text);
-- SwiftUI materials (`.ultraThinMaterial` score pills on the lowest-five thumbnails, the drop capsule, the Compare HUD
-  and side labels) render without their blur, so their text sits on the photo;
-- the sidebar's running ProgressView ring draws in the label colour, and `.tertiary` delivery symbols are faint in
-  dark;
+- glass and materials (Compare HUD, side labels, knob, toasts, score capsules) are a flat stand-in, not blurred glass;
+- the sidebar's running ProgressView ring draws in the label colour (a white disc with a dark wedge);
 - `.saturation(0)` does not render: queued/working grid cells get a greyscale thumbnail while snapshot rendering.
 - Settings renders the selected tab without its toolbar tab bar (`SettingsView`'s snapshot path skips the `TabView`);
-- NSAlert's default button is the system blue (no `AccentColor` asset; see Docs/DECISIONS.md), as in the real app.
+- the harness's NSAlert default button gets the accent explicitly; the app gets it from the bundle's `AccentColor`.
 
 ## What each state contains
 
@@ -158,7 +168,7 @@ All states use `Fixtures` (Finn und Lissy: 535 photos, 10.95 GB, ILCE-7RM5, July
   `preparing`: scanning, 212 found, estimates pending. `setup-ready`: scan done, `Fixtures.estimates`, preflight to
   `…/Finn und Lissy – Deliveries`. `setup-estimating`: scan done, estimates pending. `setup-warn-precompressed`: scan
   notice `.alreadyCompressed(312 of 535)`. `setup-blocked-disk`: preflight notice `.notEnoughSpace("Macintosh HD",
-  1.9 GB, 0.8 GB)`. `setup-create-more`: `existingWedding` = Finn und Lissy (Couple + Website done on Jul 14), Archive
+  Fixtures.defaultDeliveriesBytes = 1,56 GB, 0,8 GB)`, the same total as the bottom bar. `setup-create-more`: `existingWedding` = Finn und Lissy (Couple + Website done on Jul 14), Archive
   ticked, sidebar with history. `drop-on-setup`: `draft.isDropTargeted` and `dropZone = .targeted(.photos(24))`.
   `edit-delivery`: `sheet = .editDelivery(Couple’s Package, isNew: false)`.
 - **Jobs:** Finn und Lissy with Couple + Website via `Fixtures.inProgress`, history in the sidebar, grid delivery

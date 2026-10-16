@@ -92,7 +92,7 @@ struct PhotoCell: View, Equatable {
             .help(cell.photo.relativePath)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Copy.Done.cellAccessibility(fileName: fileStem, status: statusWord,
-                                                            fraction: cell.savedFraction, score: cell.score))
+                                                            fraction: cell.savedFraction, score: cell.score, locale: locale))
             .accessibilityAddTraits(isSelected ? [.isSelected, .isImage] : .isImage)
     }
 
@@ -110,7 +110,7 @@ struct PhotoCell: View, Equatable {
         case .working:
             ProgressView().controlSize(.mini)
                 .frame(width: 20, height: 20)
-                .background(.regularMaterial, in: Circle())
+                .hmbMaterial(.regularMaterial, in: Circle())
         case .keptOriginal:
             Image(systemName: "equal.circle.fill").font(Tokens.Typography.statusBadge)
                 .foregroundStyle(.secondary).background(Circle().fill(.background).padding(2))

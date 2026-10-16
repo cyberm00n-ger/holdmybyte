@@ -275,7 +275,11 @@ public final class AppModel {
                 }
             } catch {
                 guard let self, !Task.isCancelled, self.state.draft?.wedding == draftID else { return }
-                self.showDropError(.noPhotos)
+                if let unavailable = error as? EngineUnavailableError {
+                    self.showDropError(.engineUnavailable(reason: unavailable.reason))
+                } else {
+                    self.showDropError(.noPhotos)
+                }
             }
         }
     }
@@ -301,6 +305,8 @@ public final class AppModel {
         state.selection = .newWedding
         state.dropZone = .error(error)
         dropErrorTask?.cancel()
+        // The engine error stays: it does not go away by itself, and the next drop would only show it again.
+        if case .engineUnavailable = error { return }
         dropErrorTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Copy.DropError.resetAfter))
             guard let self, !Task.isCancelled, case .error = self.state.dropZone else { return }

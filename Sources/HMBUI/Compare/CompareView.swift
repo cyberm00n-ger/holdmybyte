@@ -15,6 +15,7 @@ public struct CompareView: View {
     @Environment(\.isSnapshotRendering) private var isSnapshotRendering
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.locale) private var locale
+    @Environment(\.displayScale) private var displayScale
 
     static let coordinateSpace = "hmb.compare"
     static let toastDuration: Duration = .milliseconds(2500)
@@ -81,9 +82,9 @@ public struct CompareView: View {
                                   CompareKeyboard.toggleZoom(model: model, proxy: proxy, atCursor: false, point: point)
                               })
                     .backgroundExtensionEffect()
-                if compare.mode == .split, comparing, !compare.showsOriginal, !compare.showsDifferences {
-                    CompareDivider(model: model, x: (size.width * compare.divider).rounded(), width: size.width,
-                                   height: size.height, divider: compare.divider)
+                if let plan = dividerPlan(compare: compare, images: images, size: size),
+                   let line = plan.dividerLine, let span = plan.dividerSpan {
+                    CompareDivider(model: model, line: line, span: span, divider: compare.divider)
                 }
                 centredCapsules(compare: compare, pair: pair, comparing: comparing,
                                 failed: pair == nil && loader.key == key && loader.failure != nil)
@@ -171,6 +172,7 @@ public struct CompareView: View {
                 } label: {
                     Label(preset.name, systemImage: preset.symbol)
                 }
+                .hmbMenuLabelTint()
                 .help("Choose the delivery to compare")
             }
             Toggle(isOn: Binding(get: { compare.showsDifferences }, set: { _ in model.toggleCompareDifferences() })) {
@@ -188,6 +190,7 @@ public struct CompareView: View {
             } label: {
                 Label("Zoom", systemImage: "plus.magnifyingglass")
             }
+            .hmbMenuLabelTint()
             .help("Fit or 100 % (Z)")
         }
         ToolbarSpacer(.fixed, placement: .primaryAction)
@@ -253,6 +256,19 @@ public struct CompareView: View {
     private var screenPixels: Int {
         let size = proxy.view?.bounds.size ?? Tokens.Layout.windowDefault
         return max(1024, Int((max(size.width, size.height) * 2).rounded()))
+    }
+
+    /// The canvas's plan as the canvas computes it, for the divider overlay (which must match the clip exactly).
+    private func dividerPlan(compare: CompareState, images: CompareCanvasImages, size: CGSize) -> CompareCanvasPlan? {
+        guard compare.mode == .split, images.imageSize.width > 0, size.width > 0 else { return nil }
+        let geometry = CompareGeometry(viewSize: size, imageSize: images.imageSize, backingScale: displayScale,
+                                       mode: compare.originalAvailable && images.original != nil ? compare.mode : .split)
+        let plan = CompareCanvasPlan(.init(geometry: geometry, zoom: compare.zoom, center: compare.zoomCenter,
+                                           divider: compare.divider, showsOriginal: compare.showsOriginal,
+                                           showsDifferences: compare.showsDifferences,
+                                           originalAvailable: compare.originalAvailable,
+                                           hasOriginalImage: images.original != nil, hasDifferencesImage: false))
+        return plan.dividerLine == nil ? nil : plan
     }
 
     /// nil while no pair has loaded; otherwise whether it carries the original.

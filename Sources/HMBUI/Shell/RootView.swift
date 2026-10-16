@@ -114,7 +114,7 @@ public struct AlertPresenter: ViewModifier {
     public func body(content: Content) -> some View {
         let alert = model.state.alert.flatMap { presents($0) ? $0 : nil }
         let copy = alert?.copy(in: model.state)
-        content.alert(Text(copy?.title ?? ""), isPresented: Binding(get: { alert != nil }, set: { shown in
+        content.alert(Text(Copy.keepingQuotesTogether(copy?.title ?? "")), isPresented: Binding(get: { alert != nil }, set: { shown in
             if !shown, model.state.alert == alert { model.dismissAlert() }
         }), presenting: alert) { alert in
             let buttons = copy?.buttons ?? []
