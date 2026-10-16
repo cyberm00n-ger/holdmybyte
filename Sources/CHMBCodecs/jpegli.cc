@@ -13,6 +13,8 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "lib/jpegli/encode.h"
@@ -113,6 +115,18 @@ int fail(char *err, size_t err_len, const char *format, ...) {
 int hmb_jpegli_encode(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
                       float distance, int subsampling_444, int progressive_level,
                       const hmb_marker *markers, size_t marker_count, hmb_buffer *out, char *err, size_t err_len) {
+    const hmb_jpegli_options options = {distance, distance, subsampling_444 ? 1 : 0, 1, progressive_level, 0, 0, 1};
+    return hmb_jpegli_encode_opts(rgba, width, height, stride, &options, markers, marker_count, out, err, err_len);
+}
+
+int hmb_jpegli_encode_opts(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
+                           const hmb_jpegli_options *options,
+                           const hmb_marker *markers, size_t marker_count, hmb_buffer *out, char *err, size_t err_len) {
+    if (options == nullptr) return fail(err, err_len, "hmb_jpegli_encode: options are NULL");
+    const float distance = options->distance;
+    const float chroma_distance = options->chroma_distance > 0 ? options->chroma_distance : distance;
+    const int sampling = options->sampling;
+    const int progressive_level = options->progressive_level;
     if (out == nullptr) return fail(err, err_len, "hmb_jpegli_encode: out is NULL");
     out->data = nullptr;
     out->size = 0;
@@ -122,6 +136,9 @@ int hmb_jpegli_encode(const uint8_t *rgba, uint32_t width, uint32_t height, size
     if (stride < static_cast<size_t>(width) * 4) return fail(err, err_len, "hmb_jpegli_encode: stride too small");
     if (!(distance >= 0.0f && distance <= 25.0f))
         return fail(err, err_len, "hmb_jpegli_encode: distance %g outside 0...25", static_cast<double>(distance));
+    if (!(chroma_distance >= 0.0f && chroma_distance <= 25.0f))
+        return fail(err, err_len, "hmb_jpegli_encode: chroma distance %g outside 0...25", static_cast<double>(chroma_distance));
+    if (sampling < 0 || sampling > 2) return fail(err, err_len, "hmb_jpegli_encode: sampling %d outside 0...2", sampling);
     if (progressive_level < 0 || progressive_level > HMB_JPEGLI_SCAN_PROXY)
         return fail(err, err_len, "hmb_jpegli_encode: progressive level %d outside 0...%d", progressive_level,
                     HMB_JPEGLI_SCAN_PROXY);
@@ -176,15 +193,48 @@ int hmb_jpegli_encode(const uint8_t *rgba, uint32_t width, uint32_t height, size
     cinfo.input_components = 4;
     cinfo.in_color_space = JCS_EXT_RGBX;
     jpegli_set_defaults(&cinfo);
-    const int h = subsampling_444 ? 1 : 2;
-    cinfo.comp_info[0].h_samp_factor = h;
-    cinfo.comp_info[0].v_samp_factor = h;
+    cinfo.comp_info[0].h_samp_factor = sampling == 1 ? 1 : 2;
+    cinfo.comp_info[0].v_samp_factor = sampling == 0 ? 2 : 1;
     for (int i = 1; i < cinfo.num_components; ++i) {
         cinfo.comp_info[i].h_samp_factor = 1;
         cinfo.comp_info[i].v_samp_factor = 1;
     }
-    jpegli_enable_adaptive_quantization(&cinfo, TRUE);
-    jpegli_set_distance(&cinfo, distance, TRUE);
+    jpegli_enable_adaptive_quantization(&cinfo, options->adaptive_quantization ? TRUE : FALSE);
+    // jpegli derives its three tables (Y, Cb, Cr) from one distance. A separate chroma distance takes the Cb/Cr tables
+    // jpegli makes at that distance (same base matrices, same 4:2:0 rescale) and the luma table at `distance`; a DC
+    // ratio takes each table's DC entry from the distance × dc_ratio. jpegli's quantiser reads everything else (zero
+    // bias, adaptive quantisation) from the tables. With all ratios at 1 this is exactly jpegli_set_distance.
+    const float dc_ratio = options->dc_ratio > 0 ? options->dc_ratio : 1.0f;
+    if (chroma_distance != distance || dc_ratio != 1.0f) {
+        UINT16 tables[3][DCTSIZE2];
+        auto take = [&](float d, int first, int last, bool dc) {
+            jpegli_set_distance(&cinfo, d, TRUE);
+            for (int t = first; t <= last; ++t) {
+                if (dc) tables[t][0] = cinfo.quant_tbl_ptrs[t]->quantval[0];
+                else std::memcpy(tables[t], cinfo.quant_tbl_ptrs[t]->quantval, sizeof tables[t]);
+            }
+        };
+        take(distance, 0, 0, false);
+        take(chroma_distance, 1, 2, false);
+        if (dc_ratio != 1.0f) {
+            take(std::min(25.0f, distance * dc_ratio), 0, 0, true);
+            take(std::min(25.0f, chroma_distance * dc_ratio), 1, 2, true);
+        }
+        jpegli_set_distance(&cinfo, distance, TRUE);
+        for (int t = 0; t < 3; ++t) std::memcpy(cinfo.quant_tbl_ptrs[t]->quantval, tables[t], sizeof tables[t]);
+    } else {
+        jpegli_set_distance(&cinfo, distance, TRUE);
+    }
+    for (int t = 0; t < 3; ++t) {
+        const float tilt = t == 0 ? options->luma_tilt : options->chroma_tilt;
+        if (tilt == 0.0f || cinfo.quant_tbl_ptrs[t] == nullptr) continue;
+        for (int k = 1; k < DCTSIZE2; ++k) {          // natural order: row k / 8, column k % 8
+            const int f = k / 8 + k % 8;
+            if (f < 4) continue;
+            const float q = std::round(cinfo.quant_tbl_ptrs[t]->quantval[k] * std::exp(tilt * (f - 3) / 11.0f));
+            cinfo.quant_tbl_ptrs[t]->quantval[k] = static_cast<UINT16>(q < 1 ? 1 : q > 255 ? 255 : q);
+        }
+    }
     // The proxy script: jpegli's quantisation does not depend on the scan script (only tokenisation and the SOF
     // marker do), so these are level 2's coefficients in 4 scans instead of 15.
     jpeg_scan_info proxy_scans[1 + MAX_COMPS_IN_SCAN];

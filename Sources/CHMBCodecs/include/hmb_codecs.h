@@ -22,6 +22,21 @@ void hmb_buffer_free(hmb_buffer *b);
 int  hmb_jpegli_encode(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
                        float distance, int subsampling_444, int progressive_level,
                        const hmb_marker *markers, size_t marker_count, hmb_buffer *out, char *err, size_t err_len);
+// Extended jpegli knobs (added after WP0; `hmb_jpegli_encode` is this with chroma_distance = distance, sampling from
+// subsampling_444, adaptive quantisation on). Every combination is a baseline-decodable progressive JPEG.
+typedef struct {
+    float distance;             // luma (table 0) distance, 0...25
+    float chroma_distance;      // Cb/Cr tables (1, 2); <= 0 means `distance`
+    int sampling;               // 0 = 4:2:0, 1 = 4:4:4, 2 = 4:2:2 (luma h2v1)
+    int adaptive_quantization;  // 1 = on (jpegli default)
+    int progressive_level;      // 0...2, or HMB_JPEGLI_SCAN_PROXY
+    float luma_tilt;            // AC entries at radial frequency f = row + col >= 4 scaled by exp(tilt·(f − 3)/11); 0 = off
+    float chroma_tilt;          // the same for the Cb/Cr tables
+    float dc_ratio;             // each table's DC entry taken at its distance × this; <= 0 or 1 = off
+} hmb_jpegli_options;
+int  hmb_jpegli_encode_opts(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
+                            const hmb_jpegli_options *options,
+                            const hmb_marker *markers, size_t marker_count, hmb_buffer *out, char *err, size_t err_len);
 typedef struct hmb_webp_prepared hmb_webp_prepared;
 int  hmb_webp_prepare(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
                       hmb_webp_prepared **out, char *err, size_t err_len);

@@ -184,10 +184,14 @@ struct PhotoPipeline {
                     }
                     return try Spans.measure("probe.score+wait") { try c.lane.score(candidate, against: ref, cancel: c.cancel) }
                 }
-                func jpegProbe(_ d: Double, _ chroma: ChromaSubsampling) throws -> ProbeRecord {
-                    try c.cancel.check()
-                    let data = try Spans.measure("probe.encode") { try p.jpeg.encode(v, distance: d, subsampling: chroma, markers: markers) }
-                    return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
+                func jpegProbe(_ tuning: JPEGTuning) -> (Double, ChromaSubsampling) throws -> ProbeRecord {
+                    { d, chroma in
+                        try c.cancel.check()
+                        let data = try Spans.measure("probe.encode") {
+                            try p.jpeg.encode(v, distance: d, subsampling: chroma, tuning: tuning, markers: markers)
+                        }
+                        return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
+                    }
                 }
                 func jpegSearch() throws -> SearchResult {
                     if preset.isFullSize, let mosaic = Spans.measure("mosaic.make", { p.processing.mosaic(v) }) {
@@ -195,18 +199,20 @@ struct PhotoPipeline {
                             let oracle = JPEGSearchOracle(
                                 proxyScore: { d, chroma in
                                     try c.cancel.check()
-                                    let data = try Spans.measure("mosaic.encode") { try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: chroma) }
+                                    let data = try Spans.measure("mosaic.encode") {
+                                        try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: chroma, tuning: c.constants.jpegTuning)
+                                    }
                                     let decoded = try Spans.measure("mosaic.decode") { try p.decoder.decode(encoded: data) }
                                     return try Spans.measure("mosaic.score+wait") { try c.lane.score(decoded, against: mosaicRef, cancel: c.cancel) }
                                 },
-                                probe: jpegProbe)
+                                probe: jpegProbe(c.constants.jpegTuning))
                             return try MosaicSearch.search(target: target, oracle: oracle, keepOriginalAllowed: keepAllowed,
                                                            sourceBytes: sourceBytes, chromaEnergy: features?.chromaEnergy ?? 0,
                                                            constants: c.constants)
                         }
                     }
                     return try DirectSearch.jpeg(target: target, constants: c.constants, keepOriginalAllowed: keepAllowed,
-                                                 sourceBytes: sourceBytes, probe: jpegProbe)
+                                                 sourceBytes: sourceBytes, probe: jpegProbe(c.constants.directJPEGTuning))
                 }
                 switch preset.format {
                 case .webp:

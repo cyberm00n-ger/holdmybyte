@@ -246,13 +246,15 @@ struct Estimator: Sendable {
                         for factor in [0.8, 1.0, 1.25] {
                             try cancel.check()
                             let d = Targets.jpegPrior(target) * factor
-                            let data = try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: .s420)
+                            let data = try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: .s420,
+                                                                   tuning: constants.jpegTuning)
                             points.append((log(d), try lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: cancel)))
                         }
                         return exp(ProxyCurve(points: points).inverse(Self.mosaicGoal(target: target, constants: constants),
                                                                       range: constants.lnDistanceRange))
                     }
-                    bytes = Double(try p.jpeg.encode(mosaic, distance: d, subsampling: .s420, markers: []).count)
+                    bytes = Double(try p.jpeg.encode(mosaic, distance: d, subsampling: .s420, tuning: constants.jpegTuning,
+                                                     markers: []).count)
                         * scale * kappa + markerBytes
                 }
             } else {
@@ -268,7 +270,8 @@ struct Estimator: Sendable {
                     let markers = MetadataEditor.jpegMarkers(meta)
                     func jpegSearch() throws -> Double? {
                         let result = try DirectSearch.jpeg(target: target, constants: constants) { d, chroma in
-                            let data = try p.jpeg.encode(v, distance: d, subsampling: chroma, markers: markers)
+                            let data = try p.jpeg.encode(v, distance: d, subsampling: chroma, tuning: constants.directJPEGTuning,
+                                                         markers: markers)
                             return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
                         }
                         if case .encoded(let best) = result.outcome { return Double(best.bytes) }
