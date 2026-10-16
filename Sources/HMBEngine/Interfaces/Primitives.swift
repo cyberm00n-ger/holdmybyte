@@ -9,8 +9,10 @@ public final class PixelImage: @unchecked Sendable {
     public let width: Int, height: Int, bytesPerRow: Int
     public let colorSpace: CGColorSpace
     public let pixels: UnsafeMutableRawBufferPointer        // owned; freed in deinit
-    /// Pages mapped for `pixels` (0: heap allocation).
+    /// Pages mapped for `pixels` (0: heap allocation or wrapped storage).
     private let mappedBytes: Int
+    /// The object that owns wrapped storage (nil: `pixels` belongs to this image and is freed in deinit).
+    private let owner: AnyObject?
     /// Zero-filled, bytesPerRow = width * 4 rounded up to 64.
     ///
     /// Images of 1 MB and more get their own anonymous mapping (page-aligned, zero-filled by the kernel) and give
@@ -36,8 +38,24 @@ public final class PixelImage: @unchecked Sendable {
             self.pixels.initializeMemory(as: UInt8.self, repeating: 0)
             self.mappedBytes = 0
         }
+        self.owner = nil
+    }
+
+    /// Wraps pixels someone else owns (a decoder's output buffer) without copying; `owner` is retained for the
+    /// image's lifetime. Such an image is read-only by contract: nothing in the engine writes into a decoded image.
+    init(width: Int, height: Int, bytesPerRow: Int, colorSpace: CGColorSpace, wrapping base: UnsafeRawPointer,
+         owner: AnyObject) {
+        precondition(width > 0 && height > 0 && bytesPerRow >= width * 4, "PixelImage: invalid wrapped geometry")
+        self.width = width
+        self.height = height
+        self.bytesPerRow = bytesPerRow
+        self.colorSpace = colorSpace
+        self.pixels = UnsafeMutableRawBufferPointer(start: UnsafeMutableRawPointer(mutating: base), count: bytesPerRow * height)
+        self.mappedBytes = 0
+        self.owner = owner
     }
     deinit {
+        if owner != nil { return }
         if mappedBytes > 0 { munmap(pixels.baseAddress, mappedBytes) } else { pixels.deallocate() }
     }
     static let mapThreshold = 1 << 20
@@ -76,6 +94,14 @@ public protocol ImageProcessing: Sendable {
 public protocol JPEGEncoding: Sendable {
     func encode(_ image: PixelImage, distance: Double, subsampling: ChromaSubsampling,
                 markers: [JPEGMarker]) throws -> Data                     // jpegli, progressive level 2, adaptive quant on
+    /// A candidate that is only scored, never delivered (the search mosaic): the same coefficients as `encode`, so
+    /// it decodes to the same pixels, but its bytes may differ (fewer scans). Default: `encode`.
+    func encodeForScoring(_ image: PixelImage, distance: Double, subsampling: ChromaSubsampling) throws -> Data
+}
+public extension JPEGEncoding {
+    func encodeForScoring(_ image: PixelImage, distance: Double, subsampling: ChromaSubsampling) throws -> Data {
+        try encode(image, distance: distance, subsampling: subsampling, markers: [])
+    }
 }
 /// Opaque, prepared (sharp-YUV converted) WebP input. WP1 subclasses or wraps `hmb_webp_prepared*`; freed in deinit.
 open class WebPPrepared: @unchecked Sendable { public init() {} }

@@ -122,8 +122,9 @@ int hmb_jpegli_encode(const uint8_t *rgba, uint32_t width, uint32_t height, size
     if (stride < static_cast<size_t>(width) * 4) return fail(err, err_len, "hmb_jpegli_encode: stride too small");
     if (!(distance >= 0.0f && distance <= 25.0f))
         return fail(err, err_len, "hmb_jpegli_encode: distance %g outside 0...25", static_cast<double>(distance));
-    if (progressive_level < 0 || progressive_level > 2)
-        return fail(err, err_len, "hmb_jpegli_encode: progressive level %d outside 0...2", progressive_level);
+    if (progressive_level < 0 || progressive_level > HMB_JPEGLI_SCAN_PROXY)
+        return fail(err, err_len, "hmb_jpegli_encode: progressive level %d outside 0...%d", progressive_level,
+                    HMB_JPEGLI_SCAN_PROXY);
     for (size_t i = 0; i < marker_count; ++i) {
         const hmb_marker &m = markers[i];
         const bool app = m.code >= 0xE0 && m.code <= 0xEF;
@@ -184,7 +185,31 @@ int hmb_jpegli_encode(const uint8_t *rgba, uint32_t width, uint32_t height, size
     }
     jpegli_enable_adaptive_quantization(&cinfo, TRUE);
     jpegli_set_distance(&cinfo, distance, TRUE);
-    jpegli_set_progressive_level(&cinfo, progressive_level);
+    // The proxy script: jpegli's quantisation does not depend on the scan script (only tokenisation and the SOF
+    // marker do), so these are level 2's coefficients in 4 scans instead of 15.
+    jpeg_scan_info proxy_scans[1 + MAX_COMPS_IN_SCAN];
+    if (progressive_level == HMB_JPEGLI_SCAN_PROXY) {
+        jpegli_set_progressive_level(&cinfo, 2);
+        const int components = cinfo.num_components;
+        if (components < 1 || components > MAX_COMPS_IN_SCAN) {
+            std::snprintf(error.message, sizeof error.message, "proxy scan script: %d components", components);
+            std::longjmp(error.env, 1);
+        }
+        std::memset(proxy_scans, 0, sizeof proxy_scans);
+        proxy_scans[0].comps_in_scan = components;       // DC of all components, interleaved
+        for (int c = 0; c < components; ++c) proxy_scans[0].component_index[c] = c;
+        for (int c = 0; c < components; ++c) {            // then all AC coefficients of one component per scan
+            jpeg_scan_info &scan = proxy_scans[1 + c];
+            scan.comps_in_scan = 1;
+            scan.component_index[0] = c;
+            scan.Ss = 1;
+            scan.Se = DCTSIZE2 - 1;
+        }
+        cinfo.scan_info = proxy_scans;
+        cinfo.num_scans = 1 + components;
+    } else {
+        jpegli_set_progressive_level(&cinfo, progressive_level);
+    }
     cinfo.optimize_coding = TRUE;
     cinfo.write_JFIF_header = FALSE;
     cinfo.write_Adobe_marker = FALSE;

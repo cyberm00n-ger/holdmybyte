@@ -89,7 +89,28 @@ public struct ImageIODecoder: ImageDecoding {
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary) else {
             throw PrimitiveError("ImageIO could not decode the image")
         }
+        if let wrapped = Self.wrapDecoded(image) { return wrapped }
         return try Self.rasterize(image)
+    }
+
+    /// The decoded pixels as ImageIO produced them, without the copy `rasterize` makes, when they already have the
+    /// engine's layout: 8-bit RGBX (byte order R, G, B, X) in an RGB colour space. Drawing such an image 1:1 into its
+    /// own colour space with the copy blend mode is a plain copy, so the bytes are the ones `rasterize` would write
+    /// (X is ignored everywhere). Saves one full-size buffer and its copy per decode (a 45 MP candidate: 180 MB,
+    /// ~0.04 s). nil for any other layout (alpha, 16-bit, BGRX, grey, CMYK): those are rasterized as before.
+    static func wrapDecoded(_ image: CGImage) -> PixelImage? {
+        guard image.width > 0, image.height > 0, image.width <= maximumDimension, image.height <= maximumDimension,
+              image.bitsPerComponent == 8, image.bitsPerPixel == 32,
+              image.alphaInfo == .noneSkipLast,
+              image.byteOrderInfo == .orderDefault || image.byteOrderInfo == .order32Big,
+              image.pixelFormatInfo == .packed,
+              let space = image.colorSpace, space.model == .rgb,
+              image.bytesPerRow >= image.width * 4, image.bytesPerRow % 4 == 0,
+              let provider = image.dataProvider, let data = provider.data,
+              CFDataGetLength(data) >= image.bytesPerRow * (image.height - 1) + image.width * 4,
+              let base = CFDataGetBytePtr(data) else { return nil }
+        return PixelImage(width: image.width, height: image.height, bytesPerRow: image.bytesPerRow, colorSpace: space,
+                          wrapping: UnsafeRawPointer(base), owner: data)
     }
 
     /// Draws `image` 1:1 into an RGBX8 buffer in its own RGB colour space (other colour models: sRGB). Drawing into

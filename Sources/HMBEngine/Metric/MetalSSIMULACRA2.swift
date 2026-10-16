@@ -186,31 +186,78 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
         let geometry = reference.geometry
         let sizes = reference.sizes
         let layout = Self.tileLayout(sizes)
-        let set = try acquireWorkingSet(geometry)
+        let set = try Spans.measure("metal.acquire") { try acquireWorkingSet(geometry) }
         defer { recycleWorkingSet(set) }
-        let (input, rowBytes) = try upload(candidate, into: set)
+        let (input, rowBytes) = try Spans.measure("metal.upload") { try upload(candidate, into: set) }
 
-        try run { encoder in
+        try Spans.measure("metal.run") { try run { encoder in
             encodePyramid(encoder, input: input, rowBytes: rowBytes, sizes: sizes, set: set,
                           xybTarget: { _ in set.xyb }) { scale in
-                let size = sizes[scale]
-                var params = TileParams(size: SIMD2(UInt32(size.width), UInt32(size.height)),
-                                        planeStride: UInt32(size.width * size.height),
-                                        tilesX: UInt32(layout.tilesX[scale]),
-                                        tilesPerChannel: UInt32(layout.tilesPerChannel[scale]))
-                encoder.setComputePipelineState(self.tilePipeline)
-                encoder.setBuffer(referenceXYB[scale], offset: 0, index: 0)
-                encoder.setBuffer(set.xyb, offset: 0, index: 1)
-                encoder.setBuffer(set.partials, offset: layout.offsets[scale] * 4, index: 2)
-                encoder.setBytes(&params, length: MemoryLayout<TileParams>.stride, index: 3)
-                encoder.setBuffer(self.weightsBuffer, offset: 0, index: 4)
-                let tilesY = layout.tilesPerChannel[scale] / layout.tilesX[scale]
-                encoder.dispatchThreadgroups(MTLSize(width: layout.tilesX[scale], height: tilesY, depth: 3),
-                                             threadsPerThreadgroup: MTLSize(width: MetalShaders.tileWidth,
-                                                                            height: MetalShaders.threadsY, depth: 1))
+                self.encodeTiles(encoder, scale: scale, sizes: sizes, layout: layout, reference: referenceXYB, set: set)
+            }
+        } }
+        Spans.gpu(lastGPUSeconds)
+        return Spans.measure("metal.combine") { Self.combine(partials: set.partials, sizes: sizes, layout: layout) }
+    }
+
+    /// `prepareReference(reference)`, `score(candidate, against:)` and `release` in one command buffer: the reference
+    /// pyramid is built into pooled storage and both pyramids and the tile pass run back to back, so a deferred
+    /// full-resolution score (MetricLane) waits for the GPU once instead of twice. The same kernels on the same
+    /// buffers in the same order: bit-identical to the three calls.
+    public func score(_ candidate: PixelImage, againstImage referenceImage: PixelImage) throws -> Double {
+        let geometry = try Self.validate(referenceImage)
+        guard candidate.width == referenceImage.width, candidate.height == referenceImage.height else {
+            throw PrimitiveError("SSIMULACRA2: candidate \(candidate.width)×\(candidate.height) does not match the reference \(referenceImage.width)×\(referenceImage.height)")
+        }
+        let sizes = geometry.sizes
+        let layout = Self.tileLayout(sizes)
+        let referenceXYB = try acquireReferenceStorage(geometry)
+        defer { recycleReferenceStorage(referenceXYB, geometry: geometry) }
+        let set = try acquireWorkingSet(geometry)
+        defer { recycleWorkingSet(set) }
+        // Both inputs are wrapped (page-aligned) or copied; a copied reference must not share the upload buffer with
+        // the candidate, so a reference that cannot be wrapped goes through its own pooled working set first.
+        let (referenceInput, referenceRowBytes): (MTLBuffer, Int)
+        var referenceSet: WorkingSet?
+        if let wrapped = wrap(referenceImage) {
+            (referenceInput, referenceRowBytes) = wrapped
+        } else {
+            let extra = try acquireWorkingSet(geometry)
+            referenceSet = extra
+            (referenceInput, referenceRowBytes) = try upload(referenceImage, into: extra)
+        }
+        defer { if let referenceSet { recycleWorkingSet(referenceSet) } }
+        let (input, rowBytes) = try upload(candidate, into: set)
+        try run { encoder in
+            encodePyramid(encoder, input: referenceInput, rowBytes: referenceRowBytes, sizes: sizes, set: set,
+                          xybTarget: { referenceXYB[$0] }, afterScale: nil)
+            encodePyramid(encoder, input: input, rowBytes: rowBytes, sizes: sizes, set: set,
+                          xybTarget: { _ in set.xyb }) { scale in
+                self.encodeTiles(encoder, scale: scale, sizes: sizes, layout: layout, reference: referenceXYB, set: set)
             }
         }
+        Spans.gpu(lastGPUSeconds)
         return Self.combine(partials: set.partials, sizes: sizes, layout: layout)
+    }
+
+    private func encodeTiles(_ encoder: MTLComputeCommandEncoder, scale: Int, sizes: [(width: Int, height: Int)],
+                             layout: (tilesX: [Int], tilesPerChannel: [Int], offsets: [Int], total: Int),
+                             reference: [MTLBuffer], set: WorkingSet) {
+        let size = sizes[scale]
+        var params = TileParams(size: SIMD2(UInt32(size.width), UInt32(size.height)),
+                                planeStride: UInt32(size.width * size.height),
+                                tilesX: UInt32(layout.tilesX[scale]),
+                                tilesPerChannel: UInt32(layout.tilesPerChannel[scale]))
+        encoder.setComputePipelineState(tilePipeline)
+        encoder.setBuffer(reference[scale], offset: 0, index: 0)
+        encoder.setBuffer(set.xyb, offset: 0, index: 1)
+        encoder.setBuffer(set.partials, offset: layout.offsets[scale] * 4, index: 2)
+        encoder.setBytes(&params, length: MemoryLayout<TileParams>.stride, index: 3)
+        encoder.setBuffer(weightsBuffer, offset: 0, index: 4)
+        let tilesY = layout.tilesPerChannel[scale] / layout.tilesX[scale]
+        encoder.dispatchThreadgroups(MTLSize(width: layout.tilesX[scale], height: tilesY, depth: 3),
+                                     threadsPerThreadgroup: MTLSize(width: MetalShaders.tileWidth,
+                                                                    height: MetalShaders.threadsY, depth: 1))
     }
 
     /// Sums the per-tile partials in double and applies the oracle's weighting stage.
@@ -328,15 +375,9 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
 
     /// The image's pixels as a GPU buffer: wrapped in place when page-aligned (no copy), else copied into `set.upload`.
     private func upload(_ image: PixelImage, into set: WorkingSet) throws -> (MTLBuffer, Int) {
+        if let wrapped = wrap(image) { return wrapped }
         let length = image.bytesPerRow * image.height
         let base = image.pixels.baseAddress!
-        if Int(bitPattern: base) % pageSize == 0 {
-            let rounded = (length + pageSize - 1) / pageSize * pageSize
-            if let wrapped = device.makeBuffer(bytesNoCopy: base, length: rounded, options: .storageModeShared, deallocator: nil) {
-                statsLock.withLock { lastUploadWrappedStorage = true }
-                return (wrapped, image.bytesPerRow)
-            }
-        }
         statsLock.withLock { lastUploadWrappedStorage = false }
         let upload = try set.uploadBuffer(device: device, length: length)
         // Addresses travel as integers: raw pointers are not Sendable, and the copy is joined before returning.
@@ -352,6 +393,18 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
             to.copyMemory(from: from, byteCount: (end - start) * rowBytes)
         }
         return (upload, image.bytesPerRow)
+    }
+
+    /// The image's pixels wrapped in place as a GPU buffer (no copy) when page-aligned, else nil.
+    private func wrap(_ image: PixelImage) -> (MTLBuffer, Int)? {
+        let length = image.bytesPerRow * image.height
+        let base = image.pixels.baseAddress!
+        guard Int(bitPattern: base) % pageSize == 0 else { return nil }
+        let rounded = (length + pageSize - 1) / pageSize * pageSize
+        guard let wrapped = device.makeBuffer(bytesNoCopy: base, length: rounded, options: .storageModeShared,
+                                              deallocator: nil) else { return nil }
+        statsLock.withLock { lastUploadWrappedStorage = true }
+        return (wrapped, image.bytesPerRow)
     }
 
     // MARK: - Pools (old audit #2)
@@ -383,6 +436,8 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
     /// Pool keys (`Geometry.poolKey`), least recently used first.
     private var recentGeometries: [Geometry] = []
     private let workingSetRetention: Int
+    static let smallGeometryBytes = 256 << 20
+    static let smallWorkingSetRetention = 8
     private let referenceRetention: Int
     private let poolByteLimit: Int
     /// Upper bound on the geometries kept, whatever their size.
@@ -428,7 +483,11 @@ public final class MetalSSIMULACRA2: PerceptualMetric, @unchecked Sendable {
     private func recycleWorkingSet(_ set: WorkingSet) {
         poolLock.withLock {
             var sets = workingSets[set.geometry] ?? []
-            if sets.count < workingSetRetention, recentGeometries.contains(set.geometry) {
+            // Small geometries (the search mosaic, resized deliveries) are scored concurrently outside the lane's lock
+            // (MetricLane), so keep a few of their working sets instead of reallocating them per score.
+            let retention = set.geometry.pooledBytes <= Self.smallGeometryBytes
+                ? max(workingSetRetention, Self.smallWorkingSetRetention) : workingSetRetention
+            if sets.count < retention, recentGeometries.contains(set.geometry) {
                 sets.append(set)
                 workingSets[set.geometry] = sets
             }
