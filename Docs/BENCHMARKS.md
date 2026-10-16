@@ -201,3 +201,38 @@ footprint / 7.34 GB RSS: the app needs `LSEnvironment` (D-ENG-10 follow-up). Arc
 (the Mac in maintenance sleep and swapping) failed 6 timing/timeout tests (`fortyFiveMegapixelPairs`, two Setup
 estimate flows, `estimateIsCancellable` at 1.5002 s, `quitWhileRunningClosesASheet…`,
 `startWhileScanningStartsWhenScanEnds`); all 6 passed alone right after, and the whole suite passed in the next run.
+
+## Engine v3 (2026-10-16, branch `eng-v3`, D-ENG-11)
+
+Release `hmb compress` under `/usr/bin/time -l`, the baseline binary built from d42cb2d in a separate worktree and the
+eng-v3 binary run back to back, MacBookPro18,4 shared with other agents (load in every row). CPU = user + sys. Every
+photo of every lossy run met its target on v2's own reading (ImageIO decode + Metal SSIMULACRA2 of the delivered
+bytes). Reports, `sha256.txt` and logs: `~/Library/Application Support/holdmybyte-dev/runs/eng-v3-*` (wedding outputs
+deleted after hashing).
+
+**Holdout (19), A/B/A/B**
+
+| Run | Couple | Website | Social | Archive | Couple min / median, probes | Wall | CPU | Peak footprint / RSS | Load (1 min) |
+|---|---|---|---|---|---|---|---|---|---|
+| d42cb2d, Couple ×2 | 50,239,686 | | | | 74.007 / 74.105, 1.95 | 14.4 / 13.7 s | 34.7 / 34.8 s | 3.78–3.96 / 3.80 GB | 8.3 → 7.7 |
+| **eng-v3, Couple ×2** | **48,365,625 (−3.73 %)** | | | | 74.020 / 74.090, **1.84** | **5.8 / 5.7 s (−59 %)** | 23.7 / 24.0 s (−31 %) | 5.18–5.63 / 3.50–3.96 GB | 7.8 → 7.4 |
+| d42cb2d, all four ×2 | 50,239,686 | 6,265,646 | 6,015,880 | 312,351,208 | | 20.6 / 20.5 s | 118.5 / 118.6 s | 7.01–7.07 / 6.51–7.00 GB | 7.2 → 10.8 |
+| **eng-v3, all four ×2** | 48,365,625 | **5,555,974 (−11.33 %)** | **5,319,707 (−11.57 %)** | identical | | 20.2 / 19.8 s | 126.4 / 125.3 s (+6.4 %) | 6.82–6.87 / 5.28 GB | 8.4 → 11.9 |
+
+Website min / median 70.034 / 70.672 (probes 2.79), Social 85.002 / 85.024 (6.63 incl. zeroing re-scores). Repeats
+byte-identical. G1: **pass**, 48,365,625 ≤ 50,301,670, probes 1.84 ≤ 2.2.
+
+**Wedding (535 × 45 MP), all four in one run, one A/B pair (announced)**
+
+| | Couple | Website | Social | Archive | Wall | CPU | Peak footprint / RSS | Load before → after |
+|---|---|---|---|---|---|---|---|---|
+| d42cb2d | 1,352,439,246 | 163,408,108 | 163,455,205 | 8,559,293,161 (535 byte-exact) | 534.7 s | 3342.9 s | 7.44 / 6.97 GB | 4.6 → 11.3 |
+| **eng-v3** | **1,304,140,132 (−3.57 %)** | **147,270,094 (−9.88 %)** | **143,125,766 (−12.44 %)** | identical (535/535 SHA-256, byte-exact) | 519.4 s (−2.9 %) | 3535.5 s (+5.8 %) | 7.28 / 5.76 GB | 8.5 → 17.5 |
+
+Scores eng-v3: Couple min / median 74.000 / 74.109 (probes 1.95, all 4:2:0), Website 70.001 / 70.528 (2.84), Social
+85.000 / 85.026 (7.03 incl. re-scores, all 4:4:4). Lossy deliveries together 1.679 → 1.595 GB (−5.0 %). Gates on
+bytes: G3 1.304 GB ≤ 1.37 GB, G5 147.3 / 143.1 MB ≤ 165 MB, G6 8.559 GB, G7 footprint 7.28 GB ≤ 8 GB (RSS 5.76 GB);
+timing gates not evaluated (load > 3). The eng-v3 run had the higher load; under equal load `eng-speed` alone measured
+−14 % wall on this job, and the post-pass's extra CPU (WebP method 6, Social re-scores) takes most of that back on four
+deliveries, while Couple alone keeps the speed gain. G9: `shasum -a 256` of all 535 sources before the first and after
+the last run identical to `runs/wedding-sha256-before.txt` (`runs/eng-v3-wedding-sha256-{before,after}.txt`).

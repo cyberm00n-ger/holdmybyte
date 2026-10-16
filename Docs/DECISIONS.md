@@ -257,3 +257,62 @@ footprint / 7.34 GB RSS (8.04 / 7.31 GB one step earlier), so the app needs the 
 
 ### D-LEAD-1 · App gets MallocLargeCache=0 via LSEnvironment
 The engine's memory plan keeps the app under 8 GB only when malloc returns large freed blocks (D-ENG-10). The CLI re-execs itself with the variable; the app gets it from Info.plist `LSEnvironment`, set in `Scripts/bundle-app.sh`. G7 is reported as both peak RSS and peak footprint; footprint is the number macOS uses for memory pressure.
+
+## D-ENG-11 · 2026-10-16 · Engine v3: speed + tuned tables + post-pass merged, DCT path rejected (engine integrator, branch `eng-v3`)
+
+**Decision.** `eng-v3` merges all of `eng-speed`, `eng-search` and `eng-postpass` and rejects `eng-dct`; the research
+branch's findings are recorded (`Docs/COMPETITORS.md`, `Docs/variants/research.md`) but change no code yet. Evidence and
+every run: `Docs/variants/eng-v3.md`; how it works: Docs/ENGINE.md §3.2, §3.3, §3.5, §8, §10.
+
+**Adopted.**
+- (a) **Speed** (byte-identical by construction and by SHA-256 on holdout and wedding): full-size search slots from the
+  memory plan, zero-copy candidate decode, proxy scan script for the mosaic, small scores outside the lane lock, one
+  command buffer per deferred 45 MP score, threaded JXL transcode/verification (≤ 4), jpegli tokeniser patch
+  (`Vendor/patches/libjxl`, codec pin `3e81407d…`; every checkout runs `Scripts/build-codecs.sh`).
+- (b) **Tuned tables** (`JPEGTuning.fullSize`: chroma × 0.65, DC × 0.8, luma HF tilt 1.6; `JPEGTuning.resized`:
+  chroma × 0.7, AQ off; DirectSearch JPEG at T ≥ 80 searches 4:4:4 first).
+- (c) **Post-pass**: per-component scan script chosen on the mosaic for full-size probes (delivered = scored);
+  lossless scan rewrite (pixel-checked) plus up to 4 re-scored ±1-zeroing rewrites for DirectSearch JPEG; XMP without
+  layout whitespace under removeLocation/removeAll; WebP method 6 with loop-filter strength 40 / sharpness 7.
+- Old behaviour stays selectable: `SearchConstants.jpegTuning/directJPEGTuning = .jpegli`, `direct444From = .infinity`,
+  `optimizeScans = false`, `zeroingAttempts = 0`, `xmpLayout = .verbatim`, `WebPTuning.spec`; in `hmb`:
+  `HMB_JPEG_TUNING=jpegli HMB_DIRECT444=off HMB_OPTIMIZE_SCANS=0 HMB_ZEROING=0 HMB_XMP_LAYOUT=verbatim HMB_WEBP=spec`
+  reproduces d42cb2d byte for byte (holdout, all four, 76/76 SHA-256).
+
+**Rejected.** `eng-dct`'s DCT-domain recompression: +2.8 % (jpegli AQ field) / +4.5 % (plain rounding) bytes at the
+same verified floor, not faster, +0.5–1 GB footprint; cause: ImageIO's inexact coefficient decode is paid twice. Its
+cached-transform path is jpegli ±0.05 % for +0.5 GB. Its real finding (chroma × 0.75, −1.5 %) is a subset of (b),
+whose chroma 0.65 was chosen on a survey that includes 0.6–0.8 on top of the other knobs. Also not taken: zeroing for
+full-size (−0.66 % for ~6.7 s per photo), JXL effort 8/9.
+
+**Deviations from SPEC §3 (binding text unchanged; this entry is the record).** E1 "adaptive quantisation on" no
+longer holds for DirectSearch JPEG (AQ off). E2 "4:4:4 only as fail-open" no longer holds for DirectSearch at T ≥ 80
+(4:4:4 first; full size keeps E2). E3 holds for every full-size output; a DirectSearch JPEG may be delivered as a
+lossless scan rewrite of the scored file, kept only when ImageIO decodes both to identical pixels, and every zeroing
+candidate is scored as delivered. §3.5 WebP `method = 4` → method 6 + filter strength 40 / sharpness 7. §3.6 "one
+thread per photo" → up to 4 threads per call (output thread-count independent). ENGINE §5: untouched XMP is no longer
+byte-identical under removeLocation/removeAll.
+
+**Why.** Holdout (A/B with d42cb2d, release, load 7–12): Couple 50,239,686 → 48,365,625 B (−3.73 %, probes 1.95 →
+1.84, 19/19 ≥ 74), Website −11.33 %, Social −11.57 %, Archive identical; Couple wall 14.0 → 5.75 s (−59 %), CPU −31 %.
+Wedding, all four, one A/B pair (announced): Couple 1,352,439,246 → 1,304,140,132 (−3.57 %), Website 163,408,108 →
+147,270,094 (−9.88 %), Social 163,455,205 → 143,125,766 (−12.44 %), Archive 8,559,293,161 identical (535/535
+SHA-256, byte-exact); every photo ≥ its target; wall 534.7 → 519.4 s (v3 ran at the higher load), CPU 3343 → 3536 s
+(+5.8 %: WebP method 6 and the Social re-scores eat most of what (a) saves on four deliveries), footprint 7.44 →
+7.28 GB. Sources unchanged (SHA-256 before/after).
+
+**Risks accepted.** (b) is tuned on one 45 MP camera against the metric that judges it (validation set −3.6 %, but
+same shoot); a visual check at 2× on the holdout's most-compressed Website photos (WebP filter) and on grainy skin at
+full size (tables) showed no blocking — the tuned files trade a little grain. Social now lands at the floor (median
+85.03). The estimator does not model the DirectSearch post-pass; the live check still reads actual / estimate couple
+0.998, website 1.010, social 1.000, archive 1.000 (κ stays 1.0). The ImageIO
+scan-script equivalence (speed, post-pass) and libjxl's thread independence are measured facts about other people's
+code: rerun `ScanScriptEquivalenceTests` and `EncoderGoldenTests` after macOS or toolchain updates. Patent: (b) is a
+per-image quantisation-table family (Beamr's area, no matrix averaging); mention it to counsel with the existing note.
+
+**Open (owner/lead).** Research recommendation 1: at T ≥ 88 (Highest), 4:4:4 with standard Annex K tables and AQ off
+was −15 % on the holdout with libjpeg-turbo; try it in jpegli (`jpegli_use_standard_quant_tables`, AQ off, 4:4:4 —
+`hmb_jpegli_encode_opts` already has sampling and AQ) and verify with both decoders (research F4: ImageIO reads
+progressive 4:4:4 up to 1.6 lower than baseline; our candidates are always progressive, so ImageIO stays the low
+reading and D-ENG-2 holds for the 4:4:4 Social files). Detecting JPEGmini-marked sources (research rank 3) is a
+product decision.

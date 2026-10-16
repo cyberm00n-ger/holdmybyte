@@ -445,5 +445,38 @@
       "delivery": "couple",
       "stopFraction": 0.4
     }
+  },
+  "v2Engine": {
+    "note": "Reference results of the v2 engine itself (not gate limits; gates stay anchored to the old engine, D-ENG-1). For spotting regressions. Docs/DECISIONS.md D-ENG-11, Docs/BENCHMARKS.md.",
+    "d42cb2d": {
+      "holdout": {
+        "couple": 50239686,
+        "website": 6265646,
+        "social": 6015880,
+        "archive": 312351208,
+        "coupleMeanProbes": 1.95
+      },
+      "wedding": {
+        "couple": 1352439246,
+        "website": 163408108,
+        "social": 163455205,
+        "archive": 8559293161
+      }
+    },
+    "eng-v3": {
+      "holdout": {
+        "couple": 48365625,
+        "website": 5555974,
+        "social": 5319707,
+        "archive": 312351208,
+        "coupleMeanProbes": 1.84
+      },
+      "wedding": {
+        "couple": 1304140132,
+        "website": 147270094,
+        "social": 143125766,
+        "archive": 8559293161
+      }
+    }
   }
 }
