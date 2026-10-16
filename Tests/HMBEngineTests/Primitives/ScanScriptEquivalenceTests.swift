@@ -43,4 +43,40 @@ import Testing
         }
         print("[scan-eq] \(checked) pairs compared")
     }
+
+    /// The combined engine (eng-v3, Docs/DECISIONS.md D-ENG-11) uses three scripts for one set of coefficients: the
+    /// proxy script for the mosaic, level 2, and the post-pass's per-component script chosen from the mosaic — with
+    /// the search's tuned tables (full size) and with chroma 0.7 / AQ off (resized). All must decode to the same pixels.
+    @Test(.enabled(if: LocalData.hasSamples))
+    func tunedTablesDecodeToTheSamePixelsInEveryScript() throws {
+        let decoder = ImageIODecoder()
+        let processing = VImageProcessing()
+        let encoder = JpegliEncoder()
+        var checked = 0
+        for url in LocalData.samplePhotos {
+            let source = try decoder.decode(try decoder.inspect(url))
+            var images: [(String, PixelImage, JPEGTuning)] = []
+            if let mosaic = processing.mosaic(source) { images.append(("mosaic", mosaic, .fullSize)) }
+            images.append(("1440", processing.resized(source, longEdge: 1440), .resized))
+            for (label, image, tuning) in images {
+                for chroma in [ChromaSubsampling.s420, .s444] {
+                    for distance in [0.7, 1.6, 2.45] {
+                        let delivered = try encoder.encode(image, distance: distance, subsampling: chroma, tuning: tuning, markers: [])
+                        let proxy = try encoder.encodeForScoring(image, distance: distance, subsampling: chroma, tuning: tuning)
+                        let choice = try #require(try encoder.chooseScans(proxy))
+                        let scripted = try encoder.encode(image, distance: distance, subsampling: chroma, tuning: tuning,
+                                                          markers: [], scans: choice)
+                        #expect(delivered != proxy)
+                        let a = try decoder.decode(encoded: delivered)
+                        for (name, other) in [("proxy", proxy), ("scripted \(choice)", scripted)] {
+                            #expect(Measure.identical(a, try decoder.decode(encoded: other)),
+                                    "\(url.lastPathComponent) \(label) d\(distance) \(chroma) \(name)")
+                            checked += 1
+                        }
+                    }
+                }
+            }
+        }
+        print("[scan-eq] tuned: \(checked) pairs compared")
+    }
 }
