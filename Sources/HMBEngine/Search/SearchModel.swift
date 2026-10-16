@@ -52,8 +52,45 @@ public struct SearchConstants: Sendable, Hashable {
     /// `.mosaicExact`: when no full probe passes, the first rescue probe is aimed by the model at T + this (instead of
     /// d × 0.8, which overshoots by 2–3 points); further rescue probes use d × 0.8.
     public var exactRescueMargin = 0.3
+    /// Quantisation-table tuning of every full-size JPEG probe and mosaic encode (Docs/ENGINE.md §3.5).
+    public var jpegTuning = JPEGTuning.fullSize
+    /// The same for resized JPEG deliveries (Social, WebP fallback) and small full-size images (DirectSearch).
+    public var directJPEGTuning = JPEGTuning.resized
     public init() {}
     public static let spec = SearchConstants()
+}
+
+/// How jpegli's quantisation tables are derived from the searched distance d (Docs/ENGINE.md §3.5). The search still
+/// moves one parameter (d); the tuning fixes the shape of the tables around it. Every setting is a standard JPEG.
+public struct JPEGTuning: Sendable, Hashable {
+    /// Cb/Cr tables at d × this (jpegli: 1).
+    public var chromaRatio = 1.0
+    /// Luma / chroma AC entries at row + col ≥ 4 scaled by exp(tilt·(f − 3)/11) (jpegli: 0).
+    public var lumaTilt = 0.0
+    public var chromaTilt = 0.0
+    /// DC entries at the table's distance × this (jpegli: 1).
+    public var dcRatio = 1.0
+    public init(chromaRatio: Double = 1, lumaTilt: Double = 0, chromaTilt: Double = 0, dcRatio: Double = 1) {
+        self.chromaRatio = chromaRatio; self.lumaTilt = lumaTilt; self.chromaTilt = chromaTilt; self.dcRatio = dcRatio
+    }
+    /// jpegli's own tables.
+    public static let jpegli = JPEGTuning()
+    /// Full-size JPEG (MosaicSearch): finer chroma and DC, coarser luma high frequencies. Holdout, real search:
+    /// 50.240 → 48.523 MB (−3.4 %), 1.95 → 1.84 probes, 19/19 ≥ 74; T = 85: −6.6 % (Docs/variants/search.md).
+    public static let fullSize = JPEGTuning(chromaRatio: 0.65, lumaTilt: 1.6, dcRatio: 0.8)
+    /// Resized deliveries keep jpegli's tables: at 1440 px the full-size tuning costs +3 % at T = 85 (real detail
+    /// lives in the high frequencies of a downscaled photo, sensor noise in those of a 45 MP original).
+    public static let resized = JPEGTuning.jpegli
+    public var isIdentity: Bool { self == .jpegli }
+
+    public func knobs(distance d: Double, subsampling: ChromaSubsampling) -> JPEGKnobs {
+        var k = JPEGKnobs(distance: d, chromaDistance: chromaRatio == 1 ? nil : min(25, d * chromaRatio),
+                          sampling: subsampling == .s444 ? .s444 : .s420)
+        k.lumaTilt = lumaTilt
+        k.chromaTilt = chromaTilt
+        k.dcRatio = dcRatio
+        return k
+    }
 }
 
 public enum Targets {

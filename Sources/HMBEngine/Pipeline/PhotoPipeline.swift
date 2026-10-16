@@ -180,10 +180,12 @@ struct PhotoPipeline {
                     let candidate = try c.lane.decoding(pixels: v.pixelCount, cancel: c.cancel) { try p.decoder.decode(encoded: data) }
                     return try c.lane.score(candidate, against: ref, cancel: c.cancel)
                 }
-                func jpegProbe(_ d: Double, _ chroma: ChromaSubsampling) throws -> ProbeRecord {
-                    try c.cancel.check()
-                    let data = try p.jpeg.encode(v, distance: d, subsampling: chroma, markers: markers)
-                    return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
+                func jpegProbe(_ tuning: JPEGTuning) -> (Double, ChromaSubsampling) throws -> ProbeRecord {
+                    { d, chroma in
+                        try c.cancel.check()
+                        let data = try p.jpeg.encode(v, distance: d, subsampling: chroma, tuning: tuning, markers: markers)
+                        return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
+                    }
                 }
                 func jpegSearch() throws -> SearchResult {
                     if preset.isFullSize, let mosaic = p.processing.mosaic(v) {
@@ -191,17 +193,18 @@ struct PhotoPipeline {
                             let oracle = JPEGSearchOracle(
                                 proxyScore: { d, chroma in
                                     try c.cancel.check()
-                                    let data = try p.jpeg.encode(mosaic, distance: d, subsampling: chroma, markers: [])
+                                    let data = try p.jpeg.encode(mosaic, distance: d, subsampling: chroma,
+                                                                 tuning: c.constants.jpegTuning, markers: [])
                                     return try c.lane.score(try p.decoder.decode(encoded: data), against: mosaicRef, cancel: c.cancel)
                                 },
-                                probe: jpegProbe)
+                                probe: jpegProbe(c.constants.jpegTuning))
                             return try MosaicSearch.search(target: target, oracle: oracle, keepOriginalAllowed: keepAllowed,
                                                            sourceBytes: sourceBytes, chromaEnergy: features?.chromaEnergy ?? 0,
                                                            constants: c.constants)
                         }
                     }
                     return try DirectSearch.jpeg(target: target, constants: c.constants, keepOriginalAllowed: keepAllowed,
-                                                 sourceBytes: sourceBytes, probe: jpegProbe)
+                                                 sourceBytes: sourceBytes, probe: jpegProbe(c.constants.directJPEGTuning))
                 }
                 switch preset.format {
                 case .webp:

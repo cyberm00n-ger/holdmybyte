@@ -6,7 +6,8 @@
 //       --filter SearchABTests
 //
 // Variant syntax: name:key=value,key=value;… with keys aim (curve|exact), m0, m1, bias, stop, maxFull, ebias, eslope,
-// efirst, emargin, estop, eevals, ewidth. An empty list means the shipped constants (.spec).
+// efirst, emargin, estop, eevals, ewidth, estep, efail, erescue; table tuning cr, lt, ct, dcr (JPEGTuning) or
+// jpegli=1 (jpegli's own tables). An empty list means the shipped constants (.spec).
 import Foundation
 @testable import HMBEngine
 import HMBModel
@@ -40,6 +41,11 @@ enum SearchAB {
                 case "estep": c.exactMinStep = v
                 case "efail": c.exactFailStep = v
                 case "erescue": c.exactRescueMargin = v
+                case "cr": c.jpegTuning.chromaRatio = v
+                case "lt": c.jpegTuning.lumaTilt = v
+                case "ct": c.jpegTuning.chromaTilt = v
+                case "dcr": c.jpegTuning.dcRatio = v
+                case "jpegli": c.jpegTuning = .jpegli
                 default: throw PrimitiveError("unknown key \(kv[0])")
                 }
             }
@@ -79,19 +85,21 @@ enum SearchAB {
                     let oracle = JPEGSearchOracle(
                         proxyScore: { d, chroma in
                             proxies += 1
-                            let key = "\(d)-\(chroma.rawValue)"
+                            let key = "\(d)-\(chroma.rawValue)-\(constants.jpegTuning)"
                             if let s = proxyCache[key] { return s }
-                            let data = try p.jpeg.encode(mosaic, distance: d, subsampling: chroma, markers: [])
+                            let data = try p.jpeg.encode(mosaic, distance: d, subsampling: chroma, tuning: constants.jpegTuning,
+                                                         markers: [])
                             let s = try p.metric.score(try p.decoder.decode(encoded: data), against: mref)
                             proxyCache[key] = s
                             return s
                         },
                         probe: { d, chroma in
-                            let key = "\(d)-\(chroma.rawValue)"
+                            let key = "\(d)-\(chroma.rawValue)-\(constants.jpegTuning)"
                             if let (n, s) = fullCache[key] {
                                 return ProbeRecord(parameter: d, subsampling: chroma, score: s, data: Data(count: n))
                             }
-                            let data = try p.jpeg.encode(source, distance: d, subsampling: chroma, markers: markers)
+                            let data = try p.jpeg.encode(source, distance: d, subsampling: chroma, tuning: constants.jpegTuning,
+                                                         markers: markers)
                             let s = try p.metric.score(try p.decoder.decode(encoded: data), against: ref)
                             fullCache[key] = (data.count, s)
                             return ProbeRecord(parameter: d, subsampling: chroma, score: s, data: Data(count: data.count))
