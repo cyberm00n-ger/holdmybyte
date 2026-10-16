@@ -20,11 +20,12 @@ import Testing
     @Test func fourDeliveriesOnTheWeddingFitEightGigabytes() {
         let p = plan()
         #expect(p.budget == 8_000_000_000)
-        // Since the candidate is decoded into ImageIO's own buffer a full-size search is modelled at 5 B/px: eight
-        // workers fit with the minimum three full-size slots, not with a slot for each of the five lossy workers.
-        #expect(p.workers == 8 && p.archiveLanes == 3 && p.fullSlots == 3, "\(p)")
+        // Seven workers; their four lossy workers would need 4 full-size slots, the model allows the minimum three.
+        #expect(p.workers == 7 && p.archiveLanes == 3 && p.fullSlots == 3, "\(p)")
         #expect(p.plannedPeak <= p.budget)
-        #expect(MemoryPlan.peak(archives: 3, lossy: 5, pools: true, fullSlots: 4, pixels: Int64(Self.wedding)) > p.budget)
+        #expect(MemoryPlan.peak(archives: 3, lossy: 4, pools: true, fullSlots: 4, pixels: Int64(Self.wedding)) > p.budget)
+        // Eight workers with three lanes would not fit the model.
+        #expect(MemoryPlan.peak(archives: 3, lossy: 5, pools: true, fullSlots: 3, pixels: Int64(Self.wedding)) > p.budget)
     }
 
     @Test func lossyOnlyJobsGiveEveryWorkerAFullSizeSlot() {

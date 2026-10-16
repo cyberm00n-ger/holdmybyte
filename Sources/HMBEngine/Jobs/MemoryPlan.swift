@@ -10,8 +10,9 @@
 //   pools        32 B/px     the metric's pooled full-size working set and reference pyramid (one each, D-ENG-10)
 //   archive      30 B/px     one libjxl transcode + verification (1.35 GB at 45 MP)
 //   lossyWorker   6 B/px     decoded source plus resized variants and their probes
-//   fullSearch    5 B/px     candidate decode + jpegli coefficients of a full-size probe (MetricLane slots); 6 B/px
-//                            until the candidate was decoded straight into ImageIO's own buffer (speed variant)
+//   fullSearch    6 B/px     candidate decode + jpegli coefficients of a full-size probe (MetricLane slots). Kept at 6
+//                            although the candidate is now decoded straight into ImageIO's own buffer: at 5 B/px a
+//                            four-delivery wedding job got an 8th worker and peaked at 7.96 GB (speed variant)
 //
 // Full-size search slots (speed variant): every lossy worker may search at once while the model fits; otherwise the
 // slots go down to `minimumFullSlots` (the earlier fixed 3) before a worker is dropped. With the fixed 3, a
@@ -35,7 +36,7 @@ struct MemoryPlan: Sendable, CustomStringConvertible {
     static let poolBytesPerPixel: Int64 = 32
     static let archiveBytesPerPixel: Int64 = 30
     static let lossyBytesPerPixel: Int64 = 6
-    static let fullSearchBytesPerPixel: Int64 = 5
+    static let fullSearchBytesPerPixel: Int64 = 6
     /// Fewest full-size search slots the plan gives a job with lossy work (the pre-speed fixed value).
     static let minimumFullSlots = 3
 
