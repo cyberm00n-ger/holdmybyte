@@ -50,6 +50,22 @@ fetch https://github.com/libjxl/libjxl.git "$LIBJXL_TAG" "$WORK/libjxl" "$LIBJXL
 git -C "$WORK/libjxl" submodule update --init --recursive --depth 1
 fetch https://github.com/webmproject/libwebp.git "$LIBWEBP_TAG" "$WORK/libwebp" "$LIBWEBP_COMMIT"
 
+# Local patches (Vendor/patches/<lib>/*.patch, applied in name order; idempotent). Each must keep the codec's output
+# byte-identical (see the patch header and Docs/variants/speed.md).
+apply_patches() { # lib dir
+    local lib="$1" dir="$2" patch
+    for patch in "$ROOT/Vendor/patches/$lib"/*.patch; do
+        [ -f "$patch" ] || continue
+        if git -C "$dir" apply --reverse --check "$patch" 2>/dev/null; then
+            log "patch already applied: $(basename "$patch")"
+        else
+            git -C "$dir" apply "$patch" || die "patch does not apply: $patch"
+            log "applied $(basename "$patch")"
+        fi
+    done
+}
+apply_patches libjxl "$WORK/libjxl"
+
 COMMON=(-G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0
         -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DCMAKE_FIND_FRAMEWORK=NEVER
         "-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local"
