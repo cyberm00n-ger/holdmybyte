@@ -31,7 +31,7 @@ func exitWith(_ error: any Error) -> Never {
 /// overrides the engine's memory budget for tuning runs (D-ENG-7); the app never sets it. HMB_OPTIMIZE_SCANS and
 /// HMB_XMP_LAYOUT, HMB_ZEROING and HMB_WEBP switch the post-pass variant's parts off or on for A/B runs;
 /// HMB_JPEG_TUNING and HMB_DIRECT444 the search variant's (Docs/DECISIONS.md D-ENG-11); HMB_HIGH, HMB_HIGH_BAND and
-/// HMB_HIGH_SCAN the high-target mode's (D-ENG-12).
+/// HMB_HIGH_SCAN the high-target mode's (D-ENG-13).
 func liveEngine() throws -> LiveEngine {
     let support = FileManager.default.temporaryDirectory.appending(path: "holdmybyte-cli-\(getpid())", directoryHint: .isDirectory)
     let environment = ProcessInfo.processInfo.environment

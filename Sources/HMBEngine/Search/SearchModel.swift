@@ -71,7 +71,7 @@ public struct SearchConstants: Sendable, Hashable {
     /// smallest that still reaches the target is delivered. 0 = off.
     public var zeroingAttempts = 4
 
-    /// High-target JPEG mode (Docs/variants/highest.md, Docs/DECISIONS.md D-ENG-12) for full-size JPEG at fixed
+    /// High-target JPEG mode (Docs/variants/highest.md, Docs/DECISIONS.md D-ENG-13) for full-size JPEG at fixed
     /// floors (not Balanced): `highTuning`'s tables, 4:2:0 and from `high444From` also 4:4:4. Targets in
     /// `highCompareFrom..<highFirstFrom` search both this mode and the tuned search and deliver the smaller verified
     /// result; targets from `highFirstFrom` search this mode first and the tuned search only if it reaches nothing.

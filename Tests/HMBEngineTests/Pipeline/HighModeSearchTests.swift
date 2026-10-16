@@ -1,4 +1,4 @@
-// The high-target mode's policy in MosaicSearch (Docs/variants/highest.md, D-ENG-12): off below the band, both
+// The high-target mode's policy in MosaicSearch (Docs/variants/highest.md, D-ENG-13): off below the band, both
 // searches inside it (the smaller verified result wins), the high mode first above it (the tuned search only if it
 // reaches nothing); inside the high mode 4:2:0, plus 4:4:4 from `high444From` unless the mosaic rules it out.
 import Foundation

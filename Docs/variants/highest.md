@@ -2,7 +2,7 @@
 
 Branch `eng-highest` (worktree `hmb-eng-highest`), base `main` 66e3db0 (merged eng-v3). 2026-10-16, MacBookPro18,4
 (M1 Max, 10 cores, 64 GB), shared with other agents and never quiet (load in every timing row; no timing here is a gate
-number). Decision record: Docs/DECISIONS.md D-ENG-12; how it works: Docs/ENGINE.md §3.2.
+number). Decision record: Docs/DECISIONS.md D-ENG-13; how it works: Docs/ENGINE.md §3.2.
 
 Quality is always v2's metric on the delivered bytes: ImageIO decode of source and file, Metal SSIMULACRA2. No floor
 and no metric was changed. "turbo" = both source and file decoded by libjpeg-turbo 3.2 `djpeg` (islow IDCT), then the
@@ -33,7 +33,7 @@ turbo min 84.88 / 84.85 (medians 85.06 / 85.04), wall 12.1 / 12.4 s → 10.3 / 1
 **Unchanged deliveries:** Couple, Website, Social, Archive on the holdout: 76/76 files SHA-256-identical to main. With
 `HMB_HIGH=off`, Highest and High are byte-identical to main (19/19 each).
 
-**Full wedding, Highest** (535 × 45 MP, one run each, back to back): see §5.
+**Full wedding, Highest:** not measured (§5).
 
 ## 2. What changed
 
@@ -148,7 +148,9 @@ default.
 
 ## 5. Full wedding, Highest
 
-WEDDING_PLACEHOLDER
+Not measured (resource limit). The branch's wedding run was cut off by the session crash and full-wedding runs were
+not repeated afterwards; the holdout (§1) is the evidence. The integration branch `eng-r2` measures the high mode on
+the holdout again, with the decoder guard (Docs/BENCHMARKS.md).
 
 ## 6. Open (owner)
 
@@ -169,4 +171,7 @@ alone above it, tuned rescue when it reaches nothing, compare band picks the sma
 `high444From` and the mosaic preselection, switched off = tuned search), `HighModeCodecTests` (standard tables are Annex
 K scaled from d, sequential is SOF0 and scoring-only keeps it, tunings unchanged), `HighModeLiveTests` (holdout Highest:
 19/19 ≥ 90 in the high mode, ≤ 183,000,000 B, ≤ 0.96 × main, probes ≤ 3.2), opt-in `HighestLabTests` (frontier
-survey with turbo reading, `djpeg` pair scoring, single encodes). TESTS_PLACEHOLDER
+survey with turbo reading, `djpeg` pair scoring, single encodes).
+Run after the crash (debug, env sourced): `HighModeSearchTests` 8/8 (7 tests, one with 2 arguments),
+`HighModeCodecTests` 3/3, `HighModeLiveTests` 1/1 (20.4 s) pass. The full suite was not run on this branch (resource
+limit); it runs on the integration branch `eng-r2`.

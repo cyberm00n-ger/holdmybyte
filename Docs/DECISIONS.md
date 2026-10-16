@@ -315,11 +315,11 @@ was −15 % on the holdout with libjpeg-turbo; try it in jpegli (`jpegli_use_sta
 `hmb_jpegli_encode_opts` already has sampling and AQ) and verify with both decoders (research F4: ImageIO reads
 progressive 4:4:4 up to 1.6 lower than baseline; our candidates are always progressive, so ImageIO stays the low
 reading and D-ENG-2 holds for the 4:4:4 Social files). Detecting JPEGmini-marked sources (research rank 3) is a
-product decision. (Research recommendation 1: measured and decided in D-ENG-12.)
+product decision.
 
-## D-ENG-12 · 2026-10-16 · High-target mode: jpegli without adaptive quantisation at fixed floors ≥ 85; Annex K and baseline not adopted (branch `eng-highest`)
+## D-ENG-13 · 2026-10-16 · High-target mode: jpegli without adaptive quantisation at fixed floors ≥ 85; Annex K and baseline not adopted (branch `eng-highest`)
 
-**Decision.** Full-size JPEG deliveries with a fixed floor of 85 or more (High, Highest; not Balanced) are searched in
+**Decision** (answers D-ENG-11's research recommendation 1). Full-size JPEG deliveries with a fixed floor of 85 or more (High, Highest; not Balanced) are searched in
 a high-target mode: `JPEGTuning.highTarget` = `fullSize`'s table shape with adaptive quantisation **off**, progressive,
 4:2:0 and — from T 89 — also 4:4:4 (mosaic-preselected), the smaller verified result delivered; the tuned search runs
 only when the high mode reaches nothing. A compare band (tuned and high, smaller verified) exists
@@ -330,7 +330,7 @@ only when the high mode reaches nothing. A compare band (tuned and high, smaller
 **Why.** Holdout, release, back to back with main 66e3db0: Highest 191,497,771 → 182,337,941 B (−4.78 %), probes
 2.26 → 2.74, ImageIO min 90.019 → 90.011, libjpeg-turbo min 89.81 → 89.82; High 102,245,961 → 98,776,135 B (−3.39 %),
 probes 2.00 → 1.74. Couple, Website, Social, Archive 76/76 SHA-256-identical; `HMB_HIGH=off` reproduces main's Highest
-and High byte for byte. Wedding Highest: Docs/variants/highest.md §5. Highest is now below JPEGmini's bytes on the
+and High byte for byte. Wedding Highest: not measured (resource limit). Highest is now below JPEGmini's bytes on the
 holdout (182.3 vs 191.0 MB) with every file ≥ 90 on both decoders, where JPEGmini's files read 79.1–91.5.
 
 **Rejected, with measurements.** (a) **Annex K tables** (research rank 1): in jpegli they lose to jpegli's own tuned
