@@ -4,7 +4,8 @@
 //
 //   HMB_DIRECT_AB='spec:;old:jstop=1.0' swift test -c release --filter DirectSearchABTests
 //
-// Variant syntax: name:key=value,…; keys stop (directStop, WebP), jstop (directStopJPEG), max (directMaxProbes).
+// Variant syntax: name:key=value,…; keys stop (directStop, WebP), jstop (directStopJPEG), max (directMaxProbes),
+// from444 (direct444From), cr / aq (directJPEGTuning), jpegli=1 (jpegli's tables, §3.5 order).
 import Foundation
 @testable import HMBEngine
 import HMBModel
@@ -24,6 +25,10 @@ import Testing
                 case "stop": c.directStop = v
                 case "jstop": c.directStopJPEG = v
                 case "max": c.directMaxProbes = Int(v)
+                case "from444": c.direct444From = v
+                case "cr": c.directJPEGTuning.chromaRatio = v
+                case "aq": c.directJPEGTuning.adaptiveQuantization = v != 0
+                case "jpegli": c.directJPEGTuning = .jpegli; c.direct444From = .infinity
                 default: throw PrimitiveError("unknown key \(kv[0])")
                 }
             }
@@ -76,8 +81,8 @@ import Testing
                         }
                         if best == nil {
                             let r = try DirectSearch.jpeg(target: target, constants: c) { d, chroma in
-                                let (n, s) = try measure("d\(d)-\(chroma.rawValue)") {
-                                    try p.jpeg.encode(v, distance: d, subsampling: chroma, markers: markers)
+                                let (n, s) = try measure("d\(d)-\(chroma.rawValue)-\(c.directJPEGTuning)") {
+                                    try p.jpeg.encode(v, distance: d, subsampling: chroma, tuning: c.directJPEGTuning, markers: markers)
                                 }
                                 return ProbeRecord(parameter: d, subsampling: chroma, score: s, data: Data(count: n))
                             }

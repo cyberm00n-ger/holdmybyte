@@ -28,15 +28,37 @@ func exitWith(_ error: any Error) -> Never {
 
 /// The live engine with its own support folder, so CLI journals never mix with the app's. `--workers N` arrives as
 /// HMB_WORKERS (exported by `CommandRunner` before this runs; Docs/DECISIONS.md D-ENG-6). HMB_MEMORY_BUDGET (bytes)
-/// overrides the engine's memory budget for tuning runs (D-ENG-7); the app never sets it.
+/// overrides the engine's memory budget for tuning runs (D-ENG-7); the app never sets it. HMB_OPTIMIZE_SCANS and
+/// HMB_XMP_LAYOUT, HMB_ZEROING and HMB_WEBP switch the post-pass variant's parts off or on for A/B runs;
+/// HMB_JPEG_TUNING and HMB_DIRECT444 the search variant's (Docs/DECISIONS.md D-ENG-11).
 func liveEngine() throws -> LiveEngine {
     let support = FileManager.default.temporaryDirectory.appending(path: "holdmybyte-cli-\(getpid())", directoryHint: .isDirectory)
     let environment = ProcessInfo.processInfo.environment
     let workers = environment["HMB_WORKERS"].flatMap(Int.init).map { min(64, max(1, $0)) }
     var options = EngineOptions(workerCount: workers)
     if let budget = environment["HMB_MEMORY_BUDGET"].flatMap(Int64.init), budget > 0 { options.memoryBudget = budget }
+    if let slots = environment["HMB_FULL_SLOTS"].flatMap(Int.init), slots > 0 { options.maxLiveReferences = slots }
+    if let decodes = environment["HMB_DECODE_SLOTS"].flatMap(Int.init), decodes > 0 { options.largeDecodes = decodes }
     if let lanes = environment["HMB_ARCHIVE_LANES"].flatMap(Int.init), lanes > 0 { options.archiveConcurrency = lanes }
-    return LiveEngine(primitives: try .live(), supportDirectory: support, options: options)
+    // Variant "postpass" A/B switches (Docs/variants/postpass.md): HMB_OPTIMIZE_SCANS=0, HMB_XMP_LAYOUT=verbatim|minified,
+    // HMB_ZEROING=0, HMB_WEBP=spec.
+    if environment["HMB_OPTIMIZE_SCANS"] == "0" { options.constants.optimizeScans = false }
+    if environment["HMB_ZEROING"] == "0" { options.constants.zeroingAttempts = 0 }
+    if let layout = environment["HMB_XMP_LAYOUT"].flatMap(XMPLayout.init(rawValue:)) { options.constants.xmpLayout = layout }
+    // Variant "search" A/B switches (Docs/variants/search.md): HMB_JPEG_TUNING=jpegli (jpegli's own tables everywhere),
+    // HMB_DIRECT444=off (DirectSearch JPEG in the §3.5 order).
+    if environment["HMB_JPEG_TUNING"] == "jpegli" {
+        options.constants.jpegTuning = .jpegli
+        options.constants.directJPEGTuning = .jpegli
+    }
+    if environment["HMB_DIRECT444"] == "off" { options.constants.direct444From = .infinity }
+    let webp: WebPTuning = switch environment["HMB_WEBP"] {
+    case "spec": .spec
+    case "m6": WebPTuning(method: 6)
+    case "postpass": .postpass
+    default: .default
+    }
+    return LiveEngine(primitives: try .live(webpTuning: webp), supportDirectory: support, options: options)
 }
 
 func printJSON<T: Encodable>(_ value: T) throws {

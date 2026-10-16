@@ -177,15 +177,32 @@ struct AnalyticPhoto: Sendable {
     }
 
     @Test func directJPEGUnreachableAfterFourFourFourAtTheFloor() throws {
-        var probes: [(Double, ChromaSubsampling)] = []
-        let result = try DirectSearch.jpeg(target: 95, constants: .spec) { d, chroma in
-            probes.append((d, chroma))
-            return ProbeRecord(parameter: d, subsampling: chroma, score: 60 - log(d), data: Data(count: 10))
+        var specOrder = SearchConstants.spec
+        specOrder.direct444From = .infinity          // the §3.5 order: 4:2:0, its floor, then 4:4:4
+        for (constants, expect420) in [(specOrder, true), (SearchConstants.spec, false)] {
+            var probes: [(Double, ChromaSubsampling)] = []
+            let result = try DirectSearch.jpeg(target: 95, constants: constants) { d, chroma in
+                probes.append((d, chroma))
+                return ProbeRecord(parameter: d, subsampling: chroma, score: 60 - log(d), data: Data(count: 10))
+            }
+            #expect({ if case .unreachable = result.outcome { true } else { false } }())
+            #expect(probes.contains { abs($0.0 - 0.5) < 1e-9 && $0.1 == .s420 } == expect420)
+            #expect(probes.contains { abs($0.0 - 0.5) < 1e-9 && $0.1 == .s444 })
+            #expect(probes.allSatisfy { $0.0 >= 0.5 - 1e-9 })
         }
-        #expect({ if case .unreachable = result.outcome { true } else { false } }())
-        #expect(probes.contains { abs($0.0 - 0.5) < 1e-9 && $0.1 == .s420 })
-        #expect(probes.contains { abs($0.0 - 0.5) < 1e-9 && $0.1 == .s444 })
-        #expect(probes.allSatisfy { $0.0 >= 0.5 - 1e-9 })
+    }
+
+    @Test func directJPEGSearchesFourFourFourFirstAtHighTargets() throws {
+        for (t, first) in [(70.0, ChromaSubsampling.s420), (74, .s420), (85, .s444), (90, .s444)] {
+            var seen: [ChromaSubsampling] = []
+            let result = try DirectSearch.jpeg(target: t, constants: .spec) { d, chroma in
+                seen.append(chroma)
+                return ProbeRecord(parameter: d, subsampling: chroma, score: 95 - 12 * log(d), data: Data(count: Int(1e6 / d)))
+            }
+            #expect(seen.first == first && Set(seen) == [first], "T \(t)")
+            guard case .encoded(let best) = result.outcome else { Issue.record("T \(t) unresolved"); continue }
+            #expect(best.score >= t)
+        }
     }
 
     @Test func webpSearchTriesQualityHundredBeforeFallingBack() throws {

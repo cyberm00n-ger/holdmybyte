@@ -65,17 +65,19 @@ enum DirectSearch {
     }
 
     /// JPEG: 4:2:0, then the d = dMin floor, then 4:4:4 from the floor. Unreachable only if 4:4:4 at dMin fails.
+    /// From `direct444From` up: 4:4:4 from the prior, then the d = dMin floor.
     static func jpeg(target t: Double, constants c: SearchConstants, keepOriginalAllowed: Bool = false,
                      sourceBytes: Int = 0,
                      probe: (Double, ChromaSubsampling) throws -> ProbeRecord) throws -> SearchResult {
+        let first: ChromaSubsampling = t >= c.direct444From ? .s444 : .s420
         var probes = try run(target: t, axis: .jpeg(prior: Targets.jpegPrior(t), constants: c), constants: c,
                              stop: c.directStopJPEG) {
-            try probe($0, .s420)
+            try probe($0, first)
         }
         if bestPassing(probes, target: t) == nil, !probes.contains(where: { abs($0.parameter - c.dMin) < 1e-6 }) {
-            probes.append(try probe(c.dMin, .s420))
+            probes.append(try probe(c.dMin, first))
         }
-        if bestPassing(probes, target: t) == nil {
+        if bestPassing(probes, target: t) == nil, first == .s420 {
             var axis = Axis.jpeg(prior: c.dMin, constants: c)
             axis.start = log(c.dMin)
             probes += try run(target: t, axis: axis, constants: c, stop: c.directStopJPEG) { try probe($0, .s444) }

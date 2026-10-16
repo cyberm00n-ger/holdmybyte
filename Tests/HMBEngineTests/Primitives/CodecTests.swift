@@ -85,6 +85,61 @@ import Testing
         #expect(try jpeg.encode(image, distance: 1.6, subsampling: .s444, markers: []).count > a.count)
     }
 
+    /// The 8-bit DQT tables of a JPEG, by table id, in natural order (zig-zag undone).
+    static func quantTables(_ jpeg: Data) throws -> [Int: [Int]] {
+        let zigzag = [0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6,
+                      7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31,
+                      39, 46, 53, 60, 61, 54, 47, 55, 62, 63]
+        let b = [UInt8](jpeg)
+        var tables: [Int: [Int]] = [:]
+        var i = 2
+        while i + 4 < b.count, b[i + 1] != 0xDA {
+            let code = b[i + 1], length = Int(b[i + 2]) << 8 | Int(b[i + 3])
+            if code == 0xDB {
+                var j = i + 4
+                while j < i + 2 + length {
+                    guard b[j] >> 4 == 0 else { throw PrimitiveError("16-bit DQT") }
+                    var table = [Int](repeating: 0, count: 64)
+                    for k in 0..<64 { table[zigzag[k]] = Int(b[j + 1 + k]) }
+                    tables[Int(b[j] & 0x0F)] = table
+                    j += 65
+                }
+            }
+            i += 2 + length
+        }
+        return tables
+    }
+
+    @Test func jpegTuningIsStandardAndIdentityIsUnchanged() throws {
+        for (name, image, info) in try images(includeSamples: 1) {
+            let markers = Self.markers(icc: info.iccProfile)
+            for subsampling in [ChromaSubsampling.s420, .s444] {
+                let plain = try jpeg.encode(image, distance: 2.0, subsampling: subsampling, markers: markers)
+                #expect(try jpeg.encode(image, distance: 2.0, subsampling: subsampling, tuning: .jpegli, markers: markers) == plain,
+                        "\(name): the identity tuning is the frozen call")
+                let tuning = JPEGTuning(chromaRatio: 0.65, lumaTilt: 1.2, dcRatio: 0.8)
+                let tuned = try jpeg.encode(image, distance: 2.0, subsampling: subsampling, tuning: tuning, markers: markers)
+                let decoded = try decoder.decode(encoded: tuned)
+                #expect(decoded.width == image.width && decoded.height == image.height, "\(name)")
+                let header = try JPEGInspector.scan(tuned)
+                #expect(header.markers == markers && header.frameMarker == 0xC2, "\(name)")
+                #expect(try Self.lumaSampling(tuned) == (subsampling == .s420 ? 0x22 : 0x11))
+                let a = try Self.quantTables(plain), b = try Self.quantTables(tuned)
+                #expect(Set(b.keys) == [0, 1, 2] && Set(a.keys) == [0, 1, 2])
+                #expect(b.values.allSatisfy { $0.allSatisfy { (1...255).contains($0) } })
+                #expect(b[0]![0] < a[0]![0], "\(name): finer luma DC")
+                #expect(b[0]![63] > a[0]![63], "\(name): coarser luma high frequencies")
+                #expect(b[0]![1] == a[0]![1], "\(name): low luma frequencies untouched")
+                #expect(zip(b[1]!, a[1]!).allSatisfy { $0 <= $1 } && b[1]! != a[1]!, "\(name): finer chroma")
+            }
+        }
+        // 4:2:2 and adaptive quantisation off through the knobs.
+        let image = Synthetic.image(.waves, width: 512, height: 384)
+        let sampled = try jpeg.encode(image, knobs: JPEGKnobs(distance: 1.5, sampling: .s422, adaptiveQuantization: false), markers: [])
+        #expect(try Self.lumaSampling(sampled) == 0x21)
+        #expect(try decoder.decode(encoded: sampled).width == 512)
+    }
+
     @Test func jpegErrorPathsReturnMessages() throws {
         let image = Synthetic.image(.noise, width: 64, height: 64)
         #expect(throws: PrimitiveError.self) { try jpeg.encode(image, distance: -1, subsampling: .s420, markers: []) }

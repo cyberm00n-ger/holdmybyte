@@ -52,8 +52,65 @@ public struct SearchConstants: Sendable, Hashable {
     /// `.mosaicExact`: when no full probe passes, the first rescue probe is aimed by the model at T + this (instead of
     /// d × 0.8, which overshoots by 2–3 points); further rescue probes use d × 0.8.
     public var exactRescueMargin = 0.3
+    /// Quantisation-table tuning of every full-size JPEG probe and mosaic encode (Docs/ENGINE.md §3.5).
+    public var jpegTuning = JPEGTuning.fullSize
+    /// The same for resized JPEG deliveries (Social, WebP fallback) and small full-size images (DirectSearch).
+    public var directJPEGTuning = JPEGTuning.resized
+    /// DirectSearch JPEG searches 4:4:4 first (no 4:2:0) at targets from this up: with `JPEGTuning.resized`, 4:4:4
+    /// is 7–12 % smaller than 4:2:0 at T 85 (1024/1440 px) and 4:2:0 cannot reach 90 at 1440 px, while 4:2:0 wins
+    /// at T 70–74. `.infinity`: the §3.5 order (4:2:0, d = dMin, then 4:4:4).
+    public var direct444From = 80.0
+    /// Variant "postpass" (Docs/variants/postpass.md): full-size JPEG probes are encoded with the per-component
+    /// progressive AC script estimated from the first mosaic encode of their subsampling, and JPEGs found by
+    /// DirectSearch get the lossless scan post-pass. Neither changes a coefficient, so scores are unaffected.
+    public var optimizeScans = true
+    /// Variant "postpass": layout whitespace in XMP packets (see `XMPMinify`).
+    public var xmpLayout: XMPLayout = .minifiedUnlessKeepAll
+    /// Variant "postpass": JPEGs found by DirectSearch (Social, small full-size, WebP fallback) try up to this many
+    /// rewrites that zero isolated ±1 AC coefficients (bisection over the zigzag start), each re-scored; the
+    /// smallest that still reaches the target is delivered. 0 = off.
+    public var zeroingAttempts = 4
     public init() {}
     public static let spec = SearchConstants()
+}
+
+/// How jpegli's quantisation tables are derived from the searched distance d (Docs/ENGINE.md §3.5). The search still
+/// moves one parameter (d); the tuning fixes the shape of the tables around it. Every setting is a standard JPEG.
+public struct JPEGTuning: Sendable, Hashable {
+    /// Cb/Cr tables at d × this (jpegli: 1).
+    public var chromaRatio = 1.0
+    /// Luma / chroma AC entries at row + col ≥ 4 scaled by exp(tilt·(f − 3)/11) (jpegli: 0).
+    public var lumaTilt = 0.0
+    public var chromaTilt = 0.0
+    /// DC entries at the table's distance × this (jpegli: 1).
+    public var dcRatio = 1.0
+    /// jpegli's adaptive quantisation (jpegli: on).
+    public var adaptiveQuantization = true
+    public init(chromaRatio: Double = 1, lumaTilt: Double = 0, chromaTilt: Double = 0, dcRatio: Double = 1,
+                adaptiveQuantization: Bool = true) {
+        self.chromaRatio = chromaRatio; self.lumaTilt = lumaTilt; self.chromaTilt = chromaTilt; self.dcRatio = dcRatio
+        self.adaptiveQuantization = adaptiveQuantization
+    }
+    /// jpegli's own tables.
+    public static let jpegli = JPEGTuning()
+    /// Full-size JPEG (MosaicSearch): finer chroma and DC, coarser luma high frequencies. Holdout, real search:
+    /// 50.240 → 48.523 MB (−3.4 %), 1.95 → 1.84 probes, 19/19 ≥ 74; T = 85: −6.6 % (Docs/variants/search.md).
+    public static let fullSize = JPEGTuning(chromaRatio: 0.65, lumaTilt: 1.6, dcRatio: 0.8)
+    /// Resized deliveries (DirectSearch): finer chroma and no adaptive quantisation, jpegli's table shape otherwise
+    /// (the full-size tilt costs +3 % at 1440 px, T = 85: a downscaled photo's high frequencies are detail, a 45 MP
+    /// original's are mostly sensor noise). Holdout frontiers vs jpegli 4:2:0: 1440 px T 74 −5.8 % (4:2:0), T 85
+    /// −12.5 % (4:4:4, `direct444From`), 2560 px T 70 −2.9 %, 1024 px T 85 −7.2 % (Docs/variants/search.md).
+    public static let resized = JPEGTuning(chromaRatio: 0.7, adaptiveQuantization: false)
+    public var isIdentity: Bool { self == .jpegli }
+
+    public func knobs(distance d: Double, subsampling: ChromaSubsampling) -> JPEGKnobs {
+        var k = JPEGKnobs(distance: d, chromaDistance: chromaRatio == 1 ? nil : min(25, d * chromaRatio),
+                          sampling: subsampling == .s444 ? .s444 : .s420, adaptiveQuantization: adaptiveQuantization)
+        k.lumaTilt = lumaTilt
+        k.chromaTilt = chromaTilt
+        k.dcRatio = dcRatio
+        return k
+    }
 }
 
 public enum Targets {

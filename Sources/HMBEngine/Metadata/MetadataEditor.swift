@@ -28,7 +28,14 @@ enum MetadataEditor {
 
     static let srgbICC: Data = (CGColorSpace(name: CGColorSpace.sRGB)!.copyICCData() as Data?) ?? Data()
 
-    static func output(for info: SourceInfo, policy: MetadataPolicy, colour: ColourHandling) -> Output {
+    static func output(for info: SourceInfo, policy: MetadataPolicy, colour: ColourHandling,
+                       xmpLayout: XMPLayout = .minifiedUnlessKeepAll) -> Output {
+        var out = rawOutput(for: info, policy: policy, colour: colour)
+        if xmpLayout.minifies(policy), let xmp = out.xmp, let small = XMPMinify.minified(xmp) { out.xmp = small }
+        return out
+    }
+
+    private static func rawOutput(for info: SourceInfo, policy: MetadataPolicy, colour: ColourHandling) -> Output {
         let icc: Data? = colour == .convertToSRGB ? srgbICC : info.iccProfile
         let iptc = info.markers.filter { $0.code == 0xED }.map(\.payload)
         let xmpExtension = info.markers.filter { $0.code == 0xE1 && $0.payload.starts(with: JPEGContainer.xmpExtensionPrefix) }
@@ -68,9 +75,10 @@ enum MetadataEditor {
     /// Keep-original copy under a policy (§3.7): verbatim for keepAll; otherwise the segments are replaced, the
     /// entropy-coded data is copied byte for byte, and embedded preview images after EOI (MPF), which carry their
     /// own unfiltered EXIF, are dropped.
-    static func keptOriginal(_ info: SourceInfo, policy: MetadataPolicy) throws -> Data {
+    static func keptOriginal(_ info: SourceInfo, policy: MetadataPolicy,
+                             xmpLayout: XMPLayout = .minifiedUnlessKeepAll) throws -> Data {
         guard policy != .keepAll else { return info.fileBytes }
-        let markers = jpegMarkers(output(for: info, policy: policy, colour: .keepProfile))
+        let markers = jpegMarkers(output(for: info, policy: policy, colour: .keepProfile, xmpLayout: xmpLayout))
             .filter { $0.code != 0xFE }                 // a kept original is not a holdmybyte encode
         return try JPEGContainer.rewrite(info.fileBytes, markers: markers.map { .init(code: $0.code, payload: $0.payload) },
                                          keepTrailingData: false)

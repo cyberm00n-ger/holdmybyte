@@ -1,0 +1,142 @@
+diff --git a/lib/jpegli/entropy_coding.cc b/lib/jpegli/entropy_coding.cc
+index d0cbedf..50797e8 100644
+--- a/lib/jpegli/entropy_coding.cc
++++ b/lib/jpegli/entropy_coding.cc
+@@ -7,6 +7,10 @@
+ 
+ #include <vector>
+ 
++#if defined(__ARM_NEON) || defined(__ARM_NEON__)
++#include <arm_neon.h>
++#endif
++
+ #include "lib/jpegli/encode_internal.h"
+ #include "lib/jpegli/error.h"
+ #include "lib/jpegli/huffman.h"
+@@ -63,6 +67,41 @@ size_t EstimateNumTokens(j_compress_ptr cinfo, size_t mcu_y, size_t ysize_mcus,
+ namespace {
+ HWY_EXPORT(ComputeTokensSequential);
+ 
++// holdmybyte patch (Vendor/patches/libjxl/0001-jpegli-tokenize-masks.patch): the progressive AC tokenisers below
++// visit only the coefficients that matter, found through two 64-bit masks per block, instead of testing all
++// Se - Ss + 1 coefficients one by one. The tokens, refinement bits and counters they produce are exactly those of
++// the upstream loops (same order, same values); only the zero coefficients are skipped in bulk.
++//   nz:  bit k set iff Ss <= k <= Se and (|block[k]| >> Al) != 0
++//   any: bit k set iff Ss <= k <= Se and block[k] != 0
++inline void CoefficientMasks(const coeff_t* block, int Ss, int Se, int Al,
++                             uint64_t* nz, uint64_t* any) {
++  uint64_t n = 0;
++  uint64_t a = 0;
++#if defined(__ARM_NEON) || defined(__ARM_NEON__)
++  static const uint8_t kWeights[8] = {1, 2, 4, 8, 16, 32, 64, 128};
++  const uint8x8_t weights = vld1_u8(kWeights);
++  const uint16x8_t threshold = vdupq_n_u16(static_cast<uint16_t>(1u << Al));
++  for (int i = 0; i < 8; ++i) {
++    const int16x8_t v = vld1q_s16(block + 8 * i);
++    const uint16x8_t magnitude = vreinterpretq_u16_s16(vabsq_s16(v));
++    const uint8x8_t ge = vmovn_u16(vcgeq_u16(magnitude, threshold));
++    const uint8x8_t ne = vmovn_u16(vtstq_s16(v, v));
++    n |= static_cast<uint64_t>(vaddv_u8(vand_u8(ge, weights))) << (8 * i);
++    a |= static_cast<uint64_t>(vaddv_u8(vand_u8(ne, weights))) << (8 * i);
++  }
++#else
++  for (int k = 0; k < DCTSIZE2; ++k) {
++    int c = block[k];
++    int magnitude = c < 0 ? -c : c;
++    if ((magnitude >> Al) != 0) n |= uint64_t{1} << k;
++    if (c != 0) a |= uint64_t{1} << k;
++  }
++#endif
++  const uint64_t range = (~uint64_t{0} >> (63 - Se)) & (~uint64_t{0} << Ss);
++  *nz = n & range;
++  *any = a & range;
++}
++
+ void TokenizeProgressiveDC(const coeff_t* coeffs, int context, int Al,
+                            coeff_t* last_dc_coeff, Token** next_token) {
+   coeff_t temp2;
+@@ -135,15 +174,17 @@ void TokenizeACProgressiveScan(j_compress_ptr cinfo, int scan_index,
+       const coeff_t* block = &blocks[0][bx][0];
+       coeff_t temp2;
+       coeff_t temp;
+-      int r = 0;
+       int num_nzeros = 0;
+-      int num_future_nzeros = 0;
+-      for (int k = Ss; k <= Se; ++k) {
++      uint64_t nz;
++      uint64_t any;
++      CoefficientMasks(block, Ss, Se, Al, &nz, &any);
++      const int num_future_nzeros = __builtin_popcountll(any & ~nz);
++      int last = Ss - 1;  // the previous coefficient that got a token
++      for (uint64_t bits = nz; bits != 0; bits &= bits - 1) {
++        const int k = __builtin_ctzll(bits);
++        int r = k - last - 1;
++        last = k;
+         temp = block[k];
+-        if (temp == 0) {
+-          r++;
+-          continue;
+-        }
+         if (temp < 0) {
+           temp = -temp;
+           temp >>= Al;
+@@ -152,11 +193,6 @@ void TokenizeACProgressiveScan(j_compress_ptr cinfo, int scan_index,
+           temp >>= Al;
+           temp2 = temp;
+         }
+-        if (temp == 0) {
+-          r++;
+-          num_future_nzeros++;
+-          continue;
+-        }
+         if (eob_run > 0) emit_eob_run();
+         while (r > 15) {
+           *m->next_token++ = Token(context, 0xf0, 0);
+@@ -166,9 +202,8 @@ void TokenizeACProgressiveScan(j_compress_ptr cinfo, int scan_index,
+         int symbol = (r << 4u) + nbits;
+         *m->next_token++ = Token(context, symbol, temp2 & ((1 << nbits) - 1));
+         ++num_nzeros;
+-        r = 0;
+       }
+-      if (r > 0) {
++      if (last < Se) {
+         ++eob_run;
+         if (eob_run == 0x7FFF) emit_eob_run();
+       }
+@@ -228,20 +263,19 @@ void TokenizeACRefinementScan(j_compress_ptr cinfo, int scan_index,
+       int num_refinement_bits = 0;
+       int num_nzeros = 0;
+       int r = 0;
+-      for (int k = Ss; k <= Se; ++k) {
++      uint64_t nz;
++      uint64_t any;
++      CoefficientMasks(block, Ss, Se, Al, &nz, &any);
++      int prev = Ss - 1;  // the previous coefficient that is nonzero after the shift
++      for (uint64_t bits = nz; bits != 0; bits &= bits - 1) {
++        const int k = __builtin_ctzll(bits);
++        r += k - prev - 1;  // the coefficients in between are zero after the shift
++        prev = k;
+         int absval = block[k];
+-        if (absval == 0) {
+-          r++;
+-          continue;
+-        }
+         const int mask = absval >> (8 * sizeof(int) - 1);
+         absval += mask;
+         absval ^= mask;
+         absval >>= Al;
+-        if (absval == 0) {
+-          r++;
+-          continue;
+-        }
+         while (r > 15) {
+           token.symbol = 0xf0;
+           token.refbits = num_refinement_bits;
+@@ -266,6 +300,7 @@ void TokenizeACRefinementScan(j_compress_ptr cinfo, int scan_index,
+         next_eob_token = next_token;
+         eob_run = eob_refbits = 0;
+       }
++      r += Se - prev;  // trailing coefficients that are zero after the shift
+       if (r > 0 || num_eob_refinement_bits + num_refinement_bits > 0) {
+         ++eob_run;
+         eob_refbits += num_eob_refinement_bits + num_refinement_bits;

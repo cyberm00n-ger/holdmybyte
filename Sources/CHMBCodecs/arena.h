@@ -25,6 +25,21 @@ private:
     void *slot_;
 };
 
+/// Lets another thread allocate from a scope's arena while it runs work for that scope's call (libjxl's parallel
+/// runner): while an Adopt is alive, `operator new` on this thread is served from `slot` (from `current()` on the
+/// thread that owns the scope; nullptr adopts nothing). The scope must outlive every Adopt of its slot.
+class Adopt {
+public:
+    explicit Adopt(void *slot);
+    ~Adopt();
+    Adopt(const Adopt &) = delete;
+    Adopt &operator=(const Adopt &) = delete;
+private:
+    void *previous_;
+};
+/// The calling thread's active arena slot (nullptr when no scope is active), for `Adopt`.
+void *current();
+
 /// Allocation from the calling thread's active scope; nullptr when there is none (or its slot is full).
 void *allocate(size_t size);
 /// Frees `p` if it is an arena block (true); false for any other pointer.

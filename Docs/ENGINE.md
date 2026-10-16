@@ -3,6 +3,8 @@
 How the live engine turns a scanned wedding into verified deliveries. `Docs/SPEC.md` §3 is binding; this file
 documents how WP2 implemented it, the constants in use and what was validated. Since the integration pass
 (2026-10-15, branch `int-engine`) it also records the live fits and the search change of Docs/DECISIONS.md D-ENG-3…5.
+Since the engine integration of 2026-10-16 (branch `eng-v3`, D-ENG-11) it also records the speed changes, the tuned
+JPEG tables and the post-pass (§3.5, §8, §10).
 
 Code: `Sources/HMBEngine/{Search,Pipeline,Jobs,IO,Metadata,Estimate,Service}`.
 Tests: `Tests/HMBEngineTests/Pipeline` (fakes; live tests gated on `EnginePrimitives.live()` plus `HMB_HOLDOUT` /
@@ -30,6 +32,10 @@ Tests: `Tests/HMBEngineTests/Pipeline` (fakes; live tests gated on `EnginePrimit
 | `MemoryPlan` (workers, archive lanes), `MemoryTrace` (`HMB_MEMTRACE`) | `Jobs/MemoryPlan.swift`, `Jobs/MemoryTrace.swift` | §3.9 |
 | Codec arenas (libjxl, jpegli working memory) | `CHMBCodecs/arena.cc` | §3.9 |
 | `Estimator`, `LearnedEstimates`, `DeliveryKind` | `Estimate/Estimator.swift` | §3.10 |
+| `JPEGTuning` (table shape per search), `JPEGKnobs`, `TunableJPEGEncoding` | `Search/SearchModel.swift`, `Codecs/JpegliEncoder.swift` | §3.4/§3.5, D-ENG-11 |
+| `JPEGPostPass` (scan script, lossless rewrite, ±1 zeroing), `WebPTuning` | `Codecs/JPEGPostPass.swift`, `Codecs/LibWebPEncoder.swift` | §3.5, D-ENG-11 |
+| `XMPMinify`, `XMPLayout` | `Metadata/XMPMinify.swift` | §3.7, D-ENG-11 |
+| `Spans` (`HMB_SPANS`, wall time per pipeline span) | `Jobs/Spans.swift` | — |
 
 ## 2. Per-photo pipeline (§3.3)
 
@@ -106,6 +112,13 @@ rescue  : nothing passed → first rescue probe solve(T + 0.3) below the smalles
 Cost: 3 seeds + ≤ 6 mosaic evaluations per aimed probe (holdout mean **12 mosaic encodes per photo**, ~0.03 s each on
 2 MP) against one full probe saved (~0.7 CPU-s: encode 0.39 + decode 0.28 + score 0.05).
 
+**Since D-ENG-11** every full-size probe and mosaic encode uses `SearchConstants.jpegTuning = JPEGTuning.fullSize`
+(§3.5): the loop above is unchanged, only the tables around d are reshaped (landing distance median 1.90 → 2.12, the
+full − mosaic bias unchanged at −1.03). The mosaic is encoded with the proxy scan script (`encodeForScoring`, 4 scans,
+same coefficients as level 2), and the first mosaic encode of each subsampling also picks the per-component AC scan
+script (`JPEGPostPass.chooseScans`) that every full probe of that subsampling is then encoded with — the delivered
+bytes are still exactly the scored bytes (E3).
+
 #### `.proxyCurve` (the §3.4 loop)
 
 Constants (binding for this aim, unchanged): M0 = 0.6, M1 = 0.15, BIAS = −1.5, STOP = 0.5, MAX_FULL = 3, RESCUE = 2,
@@ -153,7 +166,11 @@ quantum of a range bound snap to that exact bound.
 
 - **JPEG:** 4:2:0 search → if nothing passes, an explicit 4:2:0 probe at d = 0.5 → if still nothing, a 4:4:4 search
   from d = 0.5. Nothing at 4:4:4 → `.failed(.qualityUnreachable)` (logged). Full-size small images also apply the
-  keep-original rule.
+  keep-original rule. **Since D-ENG-11:** targets ≥ `direct444From` (80) search 4:4:4 from the prior, then d = 0.5
+  (no 4:2:0 at all; Social at 85 is 4:4:4); every DirectSearch JPEG uses `JPEGTuning.resized` (chroma 0.7 × d,
+  adaptive quantisation off); the result then gets the post-pass (§3.5).
+- **WebP (D-ENG-11):** `WebPTuning.default` = method 6, loop-filter strength 40, sharpness 7 on WEBP_PRESET_PHOTO
+  (was method 4 and the preset's filter); `HMB_WEBP=spec|m6` for A/B runs.
 - **WebP:** if nothing passes, q = 100 is probed explicitly; if that fails too, the delivery falls back to the JPEG
   search on the same variant (`encoder = "jpegli (fallback)"`, extension `.jpg`). The sharp-YUV preparation is done
   once per (photo, delivery).
@@ -162,6 +179,9 @@ quantum of a range bound snap to that exact bound.
   6.005 MB). Website (WebP) gains nothing from a tighter window (0.4–0.6: +0.7–1.0 %, more probes): integer q steps.
 
 ### 3.4 Validation (fakes, measured curves and live A/B)
+
+The tables in this section are the measurements behind D-ENG-3 and use jpegli's own tables; the D-ENG-11 tuning and
+its search A/B are in §3.5 and `Docs/variants/search.md`.
 
 **Live A/B (authoritative, D-ENG-3).** `SearchABTests` (opt-in: `HMB_SEARCH_AB='name:key=value,…;…'`) runs the real
 `MosaicSearch.search` per variant on the 19 holdout photos with live probes (jpegli + Couple's Package markers +
@@ -209,6 +229,45 @@ their scores are on the old libjpeg-turbo reading), which is why it is pinned to
 the live run of the same algorithm gave 51.38 MB. The analytic family also runs with `.mosaicExact` (2.17 probes mean,
 0 failing, ≤ 3 + 2 per chroma). The **live** gate is `LiveEngineTests.holdoutBalancedMeetsTargetsProbesAndBytes`:
 every photo ≥ target, mean ≤ 2.2, max ≤ 5, total ≤ 50,301,670 bytes (D-ENG-1).
+
+### 3.5 Table tuning and post-pass (D-ENG-11, branches `eng-search` and `eng-postpass`)
+
+**Tables.** `hmb_jpegli_encode_opts` takes every table from jpegli's own `jpegli_set_distance` (same base matrices,
+same 4:2:0 rescale, ≤ 255) and only changes which distance each part comes from; jpegli derives zero bias and AQ from
+the final tables. Every output is a standard progressive JPEG. `JPEGTuning.jpegli` is the identity and byte-identical
+to the frozen call.
+
+| Tuning | Used by | Chroma tables | DC entries | Luma AC at f = row + col ≥ 4 | AQ |
+|---|---|---|---|---|---|
+| `fullSize` | MosaicSearch (Couple, High/Highest full), its mosaic, the estimator | d × 0.65 | d × 0.8 | × exp(1.6·(f − 3)/11), up to × 4.95 | on |
+| `resized` | DirectSearch JPEG (Social, WebP fallback, small full-size) | d × 0.7 | jpegli | jpegli | **off** |
+
+Found by a frontier survey over chroma ratio, sampling, AQ, luma/chroma tilt and DC ratio (`KnobSurveyTests`), then
+confirmed with the real searches (`SearchABTests`, `DirectSearchABTests`): full size −3.4 % on the holdout, −3.6 % on
+19 validation photos never used for tuning, −6.6 % at T 85; 4:4:4 at full size is +7 %, coarser chroma loses
+everywhere. Resized: 1440 px T 85 −12.4 % with 4:4:4 + chroma 0.7 + AQ off (4:2:0 cannot reach 90 at 1440 px).
+Details and the rejected settings: `Docs/variants/search.md`.
+
+**Post-pass.** Lossless unless stated; every part has its own switch (`SearchConstants.optimizeScans`,
+`.zeroingAttempts`, `.xmpLayout`, `WebPTuning`; `hmb`: `HMB_OPTIMIZE_SCANS=0`, `HMB_ZEROING=0`,
+`HMB_XMP_LAYOUT=verbatim|minified`, `HMB_WEBP=spec|m6|postpass`).
+- **Scan script, full size:** chosen per component from the first mosaic encode (four AC scripts: jpegli's
+  `1-2, 3-63 Al 2→1→0`, `Al 1→0`, one `3-63` scan, one `1-63` scan; estimated from the coefficients with libjpeg's
+  progressive token rules and optimal 16-bit Huffman codes), then used for every full probe. Same coefficients, so the
+  scores are bit-identical and delivered = scored. −0.25 % (Couple); cost one coefficient read + estimate on 2 MP.
+- **DirectSearch JPEG:** the final file is rewritten with the estimated script and kept only if ImageIO decodes it to
+  identical pixels (else the scored bytes are kept and logged); then up to 4 rewrites that zero isolated ±1 AC
+  coefficients (zigzag ≥ K, zero runs ≥ 2 on both sides, bisection over K) are **each re-scored** and the smallest
+  passing one is delivered. Social −0.32 % + −1.82 % (on `eng-postpass`); the re-scores are counted in `probes`.
+- **XMP** without layout whitespace under `removeLocation`/`removeAll` (only if CGImageMetadata reads exactly the same
+  tags back; packets with `parseType="Literal"` are left alone); `keepAll` stays verbatim. −1.3 % on Website/Social.
+- **Not adopted:** zeroing on full-size (−0.66 % more for ~6.7 s per 45 MP photo), the full rewrite at 45 MP (~0.55
+  CPU-s per photo for −0.04 % over the mosaic choice), JXL effort 8/9 (−0.29 / −0.40 % at ×2.8 / ×18 time).
+
+**Combined, holdout (release, A/B with d42cb2d):** Couple 50,239,686 → 48,365,625 B (−3.73 %), Website 6,265,646 →
+5,555,974 (−11.33 %), Social 6,015,880 → 5,319,707 (−11.57 %), Archive identical. With every switch off the build
+reproduces d42cb2d byte for byte, with only the post-pass on it reproduces `eng-postpass`, with only the tuning on
+`eng-search` (19/19 SHA-256 each, `Docs/variants/eng-v3.md`).
 
 ## 4. Writing, journal and resume (§3.8)
 
@@ -264,8 +323,9 @@ over completion intervals, seeded with the first interval / worker count; nil un
   (SubIFDs carry offsets that cannot be relocated) and, since D-ENG-8, without IFD1 and its thumbnail. APP13 keeps
   every Photoshop image resource byte for byte except the preview images 0x0409/0x040C (IPTC 0x0404 verbatim). On
   the wedding the two previews were 16.6 KB per file each (Website 8.9 MB, Social 17.7 MB of the G5 totals). XMP via `CGImageMetadata`: removes `exif:GPS*`,
-  `aux:SerialNumber`, `aux:LensSerialNumber`, `exifEX:BodySerialNumber` (matched by namespace URI); untouched XMP
-  stays byte-identical.
+  `aux:SerialNumber`, `aux:LensSerialNumber`, `exifEX:BodySerialNumber` (matched by namespace URI). Since D-ENG-11
+  the packet is then written without layout whitespace (`XMPMinify`, kept only when CGImageMetadata reads the same
+  tags back); under `keepAll` XMP stays byte-identical.
 - `removeAll`: new EXIF with Orientation, Artist, Copyright; XMP with only `dc:rights`, `dc:creator`; no IPTC.
 - Orientation is preserved under every policy; a source without EXIF but with an orientation gets a minimal EXIF.
 - JPEG order: APP1 Exif, APP1 XMP, APP2 ICC chain, APP13, `COM "holdmybyte 2.0"`. WebP: icc/exif/xmp to the encoder.
@@ -280,7 +340,9 @@ over completion intervals, seeded with the first interval / worker count; nil un
 
 Huffman JPEG sources: `transcodeLossless(effort: 7)`, `reconstructJPEG`, SHA-256 compare → `.jxl`, `.done`,
 `byteExact = true`. libjxl holds ~1.4 GB for a 45 MP JPEG whatever the effort (cjxl 0.12 e3/e5/e7: 1.39 GB max
-RSS, identical output), 2.4–2.7 CPU-s per transcode + verification at load 6–9. Since D-ENG-10 all of libjxl's
+RSS, identical output), 2.4–2.7 CPU-s per transcode + verification at load 6–9. Since D-ENG-11 the transcode and the verification run
+on up to 4 threads per call (`hmb_jxl_*_threads`, a `JxlParallelRunner` whose helper threads adopt the caller's arena;
+`HMB_JXL_THREADS`); libjxl's output does not depend on the thread count (all 535 wedding archives identical). Since D-ENG-10 all of libjxl's
 working memory comes from a per-call arena that is returned when the call ends (peak 1.32 GB, nothing retained),
 and archives are their own work items, at most `MemoryPlan.archiveLanes` at once (§8). With an optional `MemoryBudget`
 (D-ENG-7) the transcode and its verification reserve 33 B/px. Anything else, or any transcode/verification failure (logged): the original bytes copied,
@@ -293,9 +355,9 @@ variants are made first (one sRGB conversion, one resize per size) and the deliv
 
 | Kind | Estimate |
 |---|---|
-| Full-size JPEG | mosaic proxy curve (3 encodes + scores), mosaic encoded at d* = exp(inv(G)), × pixel ratio × κ + marker bytes; G = T + exactMargin − exactBiasPrior (= T + 1.13) for `.mosaicExact`, T + M0 − BIAS for `.proxyCurve`; capped at the source size when keep-original would apply |
+| Full-size JPEG | mosaic proxy curve (3 encodes + scores, `JPEGTuning.fullSize`, proxy scan script), mosaic encoded at d* = exp(inv(G)) with the tuning at level 2, × pixel ratio × κ + marker bytes; G = T + exactMargin − exactBiasPrior (= T + 1.13) for `.mosaicExact`, T + M0 − BIAS for `.proxyCurve`; capped at the source size when keep-original would apply |
 | Full-size WebP | mosaic encoded at qPrior × pixel ratio × κ |
-| Resized (and small full-size) | **the delivery's real DirectSearch on the sample's variant** (WebP with its JPEG fallback; JPEG 4:2:0 → d 0.5 → 4:4:4), best passing bytes × κ (D-ENG-4) |
+| Resized (and small full-size) | **the delivery's real DirectSearch on the sample's variant** (WebP with its JPEG fallback and `WebPTuning.default`; JPEG with `JPEGTuning.resized` and the 4:4:4-first rule), best passing bytes × κ (D-ENG-4). The post-pass (scan rewrite, zeroing) is not modelled; live test after D-ENG-11 (holdout, all four, actual / estimate): couple 0.998, website 1.010, social 1.000, archive 1.000 |
 | Archive | 0.78 × JPEG bytes + 1.0 × other bytes, over all photos |
 
 Totals × n/S. **κ defaults stay 1.0** — fitted on the holdout (all 19 photos, 12 sampled), actual / estimate:
@@ -327,7 +389,7 @@ job whose photo set was estimated in this session; time is attributed to deliver
   call (prepare, score, release). Waiting for the lock polls the cancel token every 20 ms, and the token is checked
   again once the lock is held, so queued workers do not each spend a GPU score after a pause. Full-size searches
   (references above 8 MP) take one of 3 slots and full-size decodes one of 2 (counting semaphores, cancellable
-  waits). Since D-ENG-10 references above 3 MP are **deferred**: the handle keeps only the caller's pixels and every
+  waits; since D-ENG-11 the number of full-size slots comes from the memory plan, below). Since D-ENG-10 references above 3 MP are **deferred**: the handle keeps only the caller's pixels and every
   score rebuilds the GPU pyramid under the lane, into pooled storage, right before scoring (bit-identical scores;
   ~35 ms GPU per full-size score). The 2048×1024 mosaic keeps a live reference.
 - Memory plan and work items (D-ENG-10, `Jobs/MemoryPlan.swift`, `Jobs/Concurrency.swift`): a job's work is split
@@ -384,6 +446,16 @@ job whose photo set was estimated in this session; time is attributed to deliver
   processes), so wall clock includes sleep; "awake" is `mach_absolute_time` across the run. Timing comparisons use
   the A/B pair in Docs/BENCHMARKS.md. 60-photo screens (same outputs) gave the same ordering: 8 / 3 lanes without the
   plan 8.26–8.63 GB footprint, 7 / 3 7.52–7.74 GB, + `MallocLargeCache=0` 7.15 GB; 2 lanes 7.21 GB at +15 % wall.
+- **Speed (D-ENG-11, `eng-speed`; outputs byte-identical):** `MemoryPlan` gives every lossy worker a full-size search
+  slot while the model fits (otherwise slots drop to the old 3 before a worker is dropped; `EngineOptions.maxLiveReferences`
+  nil = from the plan, `HMB_FULL_SLOTS`, `HMB_DECODE_SLOTS`): a Couple's Package job ran 3 searches on 8 workers before.
+  Candidates of exactly 8-bit RGBX layout are wrapped zero-copy (`ImageIODecoder.wrapDecoded`). Mosaic and ≤ 3 MP
+  scores no longer take the lane lock (each caller has its own pooled working set); a deferred 45 MP score builds the
+  pyramid and scores in one command buffer. The jpegli progressive tokenisers skip zero coefficients through two
+  64-bit masks per block (`Vendor/patches/libjxl/0001-jpegli-tokenize-masks.patch`, applied by
+  `Scripts/build-codecs.sh`; `Vendor/codecs.lock` pins the patched archive; `EncoderGoldenTests` compares 784 outputs
+  with the unpatched build). Couple-only jobs now peak at 5.2–6.0 GB footprint (was 3.8–4.2 GB); four-delivery jobs are
+  unchanged.
 - Variants no later delivery needs are dropped before each delivery: the full-resolution sRGB copy made for Website
   and Social no longer lives through the Couple's Package search (180 MB per worker at 45 MP).
 - Determinism: names fixed up front, encoders single-threaded per image (WP1), no randomness or time in outputs;
@@ -396,3 +468,14 @@ probes, 19/19 ≥ 74), live determinism 6 × 4 (byte-identical), estimator (±4 
 full-wedding runs are in `Docs/BENCHMARKS.md`. Opt-in measurement tools: `HoldoutMeasureTests` (`HMB_CURVES_OUT`,
 `HMB_RESIZED_OUT`: dense live curves as JSON) and `SearchABTests` (`HMB_SEARCH_AB`, optional `HMB_SEARCH_AB_TRACE`);
 run them in release (`swift test -c release -Xswiftc -enable-testing --filter …`).
+
+## 10. Engine integration `eng-v3` (2026-10-16, D-ENG-11)
+
+Adopted: all of `eng-speed`, all of `eng-search`, all of `eng-postpass` (lab tests included, opt-in). Rejected:
+`eng-dct` (DCT-domain recompression: +2.8 % / +4.5 % bytes at the same floor, not faster; its one gain, chroma × 0.75,
+is contained in `JPEGTuning.fullSize`'s chroma 0.65). `eng-research` changed no code; its recommendation 1 (Highest:
+4:4:4 with standard tables, AQ off) is an open item (D-ENG-11). Interactions resolved in code: one C entry
+(`hmb_jpegli_encode_opts`) carries the tuned tables, the proxy scan script and the post-pass scan choice; the mosaic is
+tuned and in the proxy script; the scan choice is read from the tuned proxy mosaic's coefficients.
+`ScanScriptEquivalenceTests.tunedTablesDecodeToTheSamePixelsInEveryScript` checks that all three scripts decode to the
+same pixels with both tunings. Measurements: `Docs/variants/eng-v3.md`, `Docs/BENCHMARKS.md`.

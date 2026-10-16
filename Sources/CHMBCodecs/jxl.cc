@@ -11,7 +11,12 @@
 #include <jxl/decode.h>
 #include <jxl/encode.h>
 #include <jxl/memory_manager.h>
+#include <jxl/parallel_runner.h>
 #include <sys/mman.h>
+
+#include <algorithm>
+#include <atomic>
+#include <pthread.h>
 
 #include "arena.h"
 
@@ -92,9 +97,90 @@ struct Growable {
     }
 };
 
+// libjxl's parallel runner: the calling thread plus up to threads − 1 helper threads per parallel stage, started and
+// joined inside the call (no pool outliving the call, nothing GCD-based, so it also works in a forked child). Plain
+// pthreads: std::thread would allocate its libc++ thread record with our arena operator new on the calling thread
+// and libc++.dylib frees it with its own operator delete at thread exit. libjxl's
+// output does not depend on the number of threads or on scheduling (each task writes its own group; results are merged
+// in order), so this only shortens a transcode/reconstruction, it never changes its bytes. The helper threads
+// allocate from the caller's arena slot (hmb_arena::Adopt), so their std::vector storage goes back to the kernel with
+// the call like the caller's.
+struct Runner {
+    uint32_t threads;
+    void *slot;               // the calling thread's arena slot
+};
+struct RunnerJob {
+    void *opaque;
+    JxlParallelRunFunction func;
+    std::atomic<uint32_t> next;
+    uint32_t end;
+    void *slot;
+};
+void runner_worker(RunnerJob *job, size_t thread) {
+    hmb_arena::Adopt adopt(job->slot);
+    for (uint32_t i = job->next.fetch_add(1); i < job->end; i = job->next.fetch_add(1)) {
+        job->func(job->opaque, i, thread);
+    }
+}
+struct HelperStart {
+    RunnerJob *job;
+    size_t thread;
+};
+void *runner_helper(void *context) {
+    const HelperStart *start = static_cast<const HelperStart *>(context);
+    runner_worker(start->job, start->thread);
+    return nullptr;
+}
+constexpr uint32_t kMaxRunnerThreads = 16;
+constexpr size_t kHelperStack = size_t(8) << 20;   // like the engine's worker threads
+JxlParallelRetCode hmb_jxl_runner(void *runner_opaque, void *jpegxl_opaque, JxlParallelRunInit init,
+                                  JxlParallelRunFunction func, uint32_t start_range, uint32_t end_range) {
+    const Runner *runner = static_cast<const Runner *>(runner_opaque);
+    if (start_range > end_range) return -1;
+    if (start_range == end_range) return 0;
+    const uint32_t threads =
+        std::max<uint32_t>(1, std::min({runner->threads, end_range - start_range, kMaxRunnerThreads}));
+    if (init(jpegxl_opaque, threads) != 0) return -1;
+    if (threads == 1) {
+        for (uint32_t i = start_range; i < end_range; ++i) func(jpegxl_opaque, i, 0);
+        return 0;
+    }
+    RunnerJob job;
+    job.opaque = jpegxl_opaque;
+    job.func = func;
+    job.next.store(start_range);
+    job.end = end_range;
+    job.slot = runner->slot;
+    pthread_t helpers[kMaxRunnerThreads];
+    HelperStart starts[kMaxRunnerThreads];
+    bool started[kMaxRunnerThreads] = {};
+    pthread_attr_t attributes;
+    pthread_attr_init(&attributes);
+    pthread_attr_setstacksize(&attributes, kHelperStack);
+    for (uint32_t t = 1; t < threads; ++t) {
+        starts[t] = {&job, t};
+        started[t] = pthread_create(&helpers[t], &attributes, runner_helper, &starts[t]) == 0;
+    }
+    pthread_attr_destroy(&attributes);
+    runner_worker(&job, 0);     // a helper that could not start leaves its share to the others: same result
+    for (uint32_t t = 1; t < threads; ++t) {
+        if (started[t]) pthread_join(helpers[t], nullptr);
+    }
+    return 0;
+}
+
 }  // namespace
 
 int hmb_jxl_transcode_jpeg(const uint8_t *jpeg, size_t size, int effort, hmb_buffer *out, char *err, size_t err_len) {
+    return hmb_jxl_transcode_jpeg_threads(jpeg, size, effort, 1, out, err, err_len);
+}
+
+int hmb_jxl_reconstruct_jpeg(const uint8_t *jxl, size_t size, hmb_buffer *out, char *err, size_t err_len) {
+    return hmb_jxl_reconstruct_jpeg_threads(jxl, size, 1, out, err, err_len);
+}
+
+int hmb_jxl_transcode_jpeg_threads(const uint8_t *jpeg, size_t size, int effort, int threads, hmb_buffer *out,
+                                   char *err, size_t err_len) {
     if (out == nullptr) return fail(err, err_len, "hmb_jxl_transcode_jpeg: out is NULL");
     out->data = nullptr;
     out->size = 0;
@@ -106,7 +192,12 @@ int hmb_jxl_transcode_jpeg(const uint8_t *jpeg, size_t size, int effort, hmb_buf
     if (encoder == nullptr) return fail(err, err_len, "hmb_jxl_transcode_jpeg: out of memory (encoder)");
     Growable buffer = {nullptr, 0};
     int result = 0;
+    Runner runner = {static_cast<uint32_t>(std::max(1, threads)), hmb_arena::current()};
     do {
+        if (runner.threads > 1 && JxlEncoderSetParallelRunner(encoder, hmb_jxl_runner, &runner) != JXL_ENC_SUCCESS) {
+            result = fail(err, err_len, "hmb_jxl_transcode_jpeg: parallel runner rejected");
+            break;
+        }
         if (JxlEncoderUseContainer(encoder, JXL_TRUE) != JXL_ENC_SUCCESS ||
             JxlEncoderStoreJPEGMetadata(encoder, JXL_TRUE) != JXL_ENC_SUCCESS) {
             result = fail(err, err_len, "hmb_jxl_transcode_jpeg: setup failed (%s)", encoder_error(JxlEncoderGetError(encoder)));
@@ -154,7 +245,8 @@ int hmb_jxl_transcode_jpeg(const uint8_t *jpeg, size_t size, int effort, hmb_buf
     return result;
 }
 
-int hmb_jxl_reconstruct_jpeg(const uint8_t *jxl, size_t size, hmb_buffer *out, char *err, size_t err_len) {
+int hmb_jxl_reconstruct_jpeg_threads(const uint8_t *jxl, size_t size, int threads, hmb_buffer *out, char *err,
+                                     size_t err_len) {
     if (out == nullptr) return fail(err, err_len, "hmb_jxl_reconstruct_jpeg: out is NULL");
     out->data = nullptr;
     out->size = 0;
@@ -167,7 +259,12 @@ int hmb_jxl_reconstruct_jpeg(const uint8_t *jxl, size_t size, hmb_buffer *out, c
     size_t used = 0;
     bool reconstructing = false;
     int result = 0;
+    Runner runner = {static_cast<uint32_t>(std::max(1, threads)), hmb_arena::current()};
     do {
+        if (runner.threads > 1 && JxlDecoderSetParallelRunner(decoder, hmb_jxl_runner, &runner) != JXL_DEC_SUCCESS) {
+            result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: parallel runner rejected");
+            break;
+        }
         if (JxlDecoderSubscribeEvents(decoder, JXL_DEC_JPEG_RECONSTRUCTION | JXL_DEC_FULL_IMAGE) != JXL_DEC_SUCCESS ||
             JxlDecoderSetInput(decoder, jxl, size) != JXL_DEC_SUCCESS) {
             result = fail(err, err_len, "hmb_jxl_reconstruct_jpeg: decoder setup failed");

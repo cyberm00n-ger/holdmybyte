@@ -290,6 +290,10 @@ Scope::~Scope() {
     if (s.live == 0) resetLocked(s);
 }
 
+Adopt::Adopt(void *slot) : previous_(t_slot) { t_slot = static_cast<Slot *>(slot); }
+Adopt::~Adopt() { t_slot = static_cast<Slot *>(previous_); }
+void *current() { return t_slot; }
+
 void *allocate(size_t size) { return arenaAllocate(size); }
 bool release(void *p) { return arenaRelease(p); }
 
