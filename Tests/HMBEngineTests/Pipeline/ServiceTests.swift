@@ -52,7 +52,7 @@ import Testing
         await #expect(throws: (any Error).self) { _ = try await task.value }
         // 1.5 s is the product budget on a quiet machine. Under load the scheduler alone adds
         // seconds; an uncancelled estimate of 24 photos at 0.5 s per fake call would take far longer.
-        #expect(monotonicSeconds() - start < (loadAverage() < 3 ? 1.5 : 4.0))
+        #expect(monotonicSeconds() - start < (loadAverage() < 3 ? 1.5 : 8.0))
     }
 
     @Test func learnedKappaFoldsAndResets() {

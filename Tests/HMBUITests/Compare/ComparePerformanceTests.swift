@@ -126,7 +126,7 @@ struct ImageIOCompareEngine: EngineService {
             let start = ContinuousClock.now
             loader.show(key, record: record, engine: engine, thumbnails: thumbnails, screenPixels: screenPixels, upcoming: [])
             var firstFrame: Duration?
-            while loader.stage != .full && loader.failure == nil && ContinuousClock.now - start < .seconds(20) {
+            while loader.stage != .full && loader.failure == nil && ContinuousClock.now - start < .seconds(120) {  // deadline only; the budgets are asserted on the timings below
                 if firstFrame == nil, loader.stage == .screen, let pair = loader.pair {
                     // The first real frame: hand the screen-resolution pair to the canvas and commit the layers.
                     view.update(images: CompareCanvasImages(original: pair.original, delivered: pair.delivered, differences: nil,
