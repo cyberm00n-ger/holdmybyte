@@ -56,6 +56,10 @@ public struct SearchConstants: Sendable, Hashable {
     public var jpegTuning = JPEGTuning.fullSize
     /// The same for resized JPEG deliveries (Social, WebP fallback) and small full-size images (DirectSearch).
     public var directJPEGTuning = JPEGTuning.resized
+    /// DirectSearch JPEG searches 4:4:4 first (no 4:2:0) at targets from this up: with `JPEGTuning.resized`, 4:4:4
+    /// is 7–12 % smaller than 4:2:0 at T 85 (1024/1440 px) and 4:2:0 cannot reach 90 at 1440 px, while 4:2:0 wins
+    /// at T 70–74. `.infinity`: the §3.5 order (4:2:0, d = dMin, then 4:4:4).
+    public var direct444From = 80.0
     public init() {}
     public static let spec = SearchConstants()
 }
@@ -70,22 +74,28 @@ public struct JPEGTuning: Sendable, Hashable {
     public var chromaTilt = 0.0
     /// DC entries at the table's distance × this (jpegli: 1).
     public var dcRatio = 1.0
-    public init(chromaRatio: Double = 1, lumaTilt: Double = 0, chromaTilt: Double = 0, dcRatio: Double = 1) {
+    /// jpegli's adaptive quantisation (jpegli: on).
+    public var adaptiveQuantization = true
+    public init(chromaRatio: Double = 1, lumaTilt: Double = 0, chromaTilt: Double = 0, dcRatio: Double = 1,
+                adaptiveQuantization: Bool = true) {
         self.chromaRatio = chromaRatio; self.lumaTilt = lumaTilt; self.chromaTilt = chromaTilt; self.dcRatio = dcRatio
+        self.adaptiveQuantization = adaptiveQuantization
     }
     /// jpegli's own tables.
     public static let jpegli = JPEGTuning()
     /// Full-size JPEG (MosaicSearch): finer chroma and DC, coarser luma high frequencies. Holdout, real search:
     /// 50.240 → 48.523 MB (−3.4 %), 1.95 → 1.84 probes, 19/19 ≥ 74; T = 85: −6.6 % (Docs/variants/search.md).
     public static let fullSize = JPEGTuning(chromaRatio: 0.65, lumaTilt: 1.6, dcRatio: 0.8)
-    /// Resized deliveries keep jpegli's tables: at 1440 px the full-size tuning costs +3 % at T = 85 (real detail
-    /// lives in the high frequencies of a downscaled photo, sensor noise in those of a 45 MP original).
-    public static let resized = JPEGTuning.jpegli
+    /// Resized deliveries (DirectSearch): finer chroma and no adaptive quantisation, jpegli's table shape otherwise
+    /// (the full-size tilt costs +3 % at 1440 px, T = 85: a downscaled photo's high frequencies are detail, a 45 MP
+    /// original's are mostly sensor noise). Holdout frontiers vs jpegli 4:2:0: 1440 px T 74 −5.8 % (4:2:0), T 85
+    /// −12.5 % (4:4:4, `direct444From`), 2560 px T 70 −2.9 %, 1024 px T 85 −7.2 % (Docs/variants/search.md).
+    public static let resized = JPEGTuning(chromaRatio: 0.7, adaptiveQuantization: false)
     public var isIdentity: Bool { self == .jpegli }
 
     public func knobs(distance d: Double, subsampling: ChromaSubsampling) -> JPEGKnobs {
         var k = JPEGKnobs(distance: d, chromaDistance: chromaRatio == 1 ? nil : min(25, d * chromaRatio),
-                          sampling: subsampling == .s444 ? .s444 : .s420)
+                          sampling: subsampling == .s444 ? .s444 : .s420, adaptiveQuantization: adaptiveQuantization)
         k.lumaTilt = lumaTilt
         k.chromaTilt = chromaTilt
         k.dcRatio = dcRatio
