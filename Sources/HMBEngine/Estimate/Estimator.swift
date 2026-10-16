@@ -176,7 +176,12 @@ struct Estimator: Sendable {
         let p = primitives
         try cancel.check()
         guard let info = try? p.decoder.inspect(photo.url), !info.isCMYK,
-              let source = try? p.decoder.decode(info) else { return [:] }      // unreadable / CMYK: nothing delivered
+              let source = try? lane.decoding(pixels: photo.pixelWidth * photo.pixelHeight, cancel: cancel, {
+                  try p.decoder.decode(info)
+              }) else {
+            try cancel.check()
+            return [:]
+        }      // unreadable / CMYK: nothing delivered
         let needsFeatures = deliveries.contains { $0.quality == .balanced }
         let features = needsFeatures ? p.processing.features(source) : nil
         // Variants first (one sRGB conversion, one resize per size), then the deliveries' estimates in parallel: a

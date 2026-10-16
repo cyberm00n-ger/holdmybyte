@@ -8,6 +8,19 @@ import HMBModel
 
 func standardError(_ text: String) { FileHandle.standardError.write(Data((text + "\n").utf8)) }
 
+/// hmb is a batch process: it starts once more with `MallocLargeCache=0`, so malloc gives freed large blocks back
+/// instead of keeping them in its cache (Docs/DECISIONS.md D-ENG-10: −0.4 GB peak footprint on a four-delivery job;
+/// the engine's own large buffers no longer come from malloc either way). libmalloc reads the variable only at process
+/// start, hence the re-exec. Set it to 1 to keep the default. (The app needs the same through LSEnvironment.)
+func startWithoutMallocLargeCache() {
+    guard ProcessInfo.processInfo.environment["MallocLargeCache"] == nil,
+          let executable = Bundle.main.executablePath else { return }
+    setenv("MallocLargeCache", "0", 1)
+    execv(executable, CommandLine.unsafeArgv)
+    unsetenv("MallocLargeCache")           // exec failed: carry on with the default allocator
+}
+startWithoutMallocLargeCache()
+
 func exitWith(_ error: any Error) -> Never {
     standardError("hmb: \(error)")
     exit(error is HMBCommand.UsageError ? 64 : 1)
@@ -22,6 +35,7 @@ func liveEngine() throws -> LiveEngine {
     let workers = environment["HMB_WORKERS"].flatMap(Int.init).map { min(64, max(1, $0)) }
     var options = EngineOptions(workerCount: workers)
     if let budget = environment["HMB_MEMORY_BUDGET"].flatMap(Int64.init), budget > 0 { options.memoryBudget = budget }
+    if let lanes = environment["HMB_ARCHIVE_LANES"].flatMap(Int.init), lanes > 0 { options.archiveConcurrency = lanes }
     return LiveEngine(primitives: try .live(), supportDirectory: support, options: options)
 }
 

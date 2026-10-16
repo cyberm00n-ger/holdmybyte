@@ -17,6 +17,8 @@
 
 #include "lib/jpegli/encode.h"
 
+#include "arena.h"
+
 namespace {
 
 struct HMBJpegError {
@@ -32,6 +34,69 @@ void hmb_jpegli_error_exit(j_common_ptr cinfo) {
 }
 
 void hmb_jpegli_output_message(j_common_ptr) {}   // warnings stay silent (no stderr noise in the app)
+
+// jpegli's working memory (coefficient planes: ~140 MB at 45 MP 4:2:0, row buffers) is taken from the calling
+// thread's arena scope instead of malloc, so it returns to the kernel when the encode ends instead of staying in
+// malloc's large-block cache (Docs/DECISIONS.md D-ENG-10). jpegli allocates every buffer through
+// `cinfo->mem->alloc_small/alloc_large` and frees by pool, so the hooks keep a list per pool; a block that does not
+// fit the arena comes from jpegli's own allocator as before. Blocks are 128-byte aligned (HWY_ALIGNMENT).
+struct ArenaBlock {            // sits in front of each arena allocation
+    ArenaBlock *next;
+    void *raw;                 // what hmb_arena::allocate returned
+};
+constexpr size_t kBlockAlign = 128;
+constexpr int kPools = 2 * JPOOL_NUMPOOLS;   // jpegli's plain and aligned pools
+
+struct ArenaHooks {
+    void *(*alloc_small)(j_common_ptr, int, size_t);
+    void *(*alloc_large)(j_common_ptr, int, size_t);
+    void (*free_pool)(j_common_ptr, int);
+    void (*self_destruct)(j_common_ptr);
+    ArenaBlock *pools[kPools];
+};
+
+void *arena_alloc(j_common_ptr cinfo, int pool_id, size_t size, void *(*fallback)(j_common_ptr, int, size_t)) {
+    ArenaHooks *hooks = static_cast<ArenaHooks *>(cinfo->client_data);
+    if (pool_id >= 0 && pool_id < kPools && size < (size_t(1) << 40)) {
+        if (void *raw = hmb_arena::allocate(size + kBlockAlign + sizeof(ArenaBlock))) {
+            const uintptr_t start = reinterpret_cast<uintptr_t>(raw) + sizeof(ArenaBlock);
+            uint8_t *user = reinterpret_cast<uint8_t *>((start + kBlockAlign - 1) & ~(uintptr_t(kBlockAlign) - 1));
+            ArenaBlock *block = reinterpret_cast<ArenaBlock *>(user) - 1;
+            block->raw = raw;
+            block->next = hooks->pools[pool_id];
+            hooks->pools[pool_id] = block;
+            return user;
+        }
+    }
+    return fallback(cinfo, pool_id, size);
+}
+void *arena_alloc_small(j_common_ptr cinfo, int pool_id, size_t size) {
+    return arena_alloc(cinfo, pool_id, size, static_cast<ArenaHooks *>(cinfo->client_data)->alloc_small);
+}
+void *arena_alloc_large(j_common_ptr cinfo, int pool_id, size_t size) {
+    return arena_alloc(cinfo, pool_id, size, static_cast<ArenaHooks *>(cinfo->client_data)->alloc_large);
+}
+void arena_release_pool(ArenaHooks *hooks, int pool_id) {
+    for (ArenaBlock *block = hooks->pools[pool_id]; block != nullptr;) {
+        ArenaBlock *next = block->next;
+        hmb_arena::release(block->raw);
+        block = next;
+    }
+    hooks->pools[pool_id] = nullptr;
+}
+void arena_free_pool(j_common_ptr cinfo, int pool_id) {
+    ArenaHooks *hooks = static_cast<ArenaHooks *>(cinfo->client_data);
+    if (pool_id >= 0 && pool_id < JPOOL_NUMPOOLS) {       // jpegli frees a pool together with its aligned twin
+        arena_release_pool(hooks, pool_id);
+        arena_release_pool(hooks, pool_id + JPOOL_NUMPOOLS);
+    }
+    hooks->free_pool(cinfo, pool_id);
+}
+void arena_self_destruct(j_common_ptr cinfo) {
+    ArenaHooks *hooks = static_cast<ArenaHooks *>(cinfo->client_data);
+    for (int pool = 0; pool < kPools; ++pool) arena_release_pool(hooks, pool);
+    hooks->self_destruct(cinfo);
+}
 
 int fail(char *err, size_t err_len, const char *format, ...) {
     if (err != nullptr && err_len > 0) {
@@ -75,6 +140,9 @@ int hmb_jpegli_encode(const uint8_t *rgba, uint32_t width, uint32_t height, size
     struct { unsigned char *data; unsigned long size; } output = {nullptr, 0};  // NOLINT(runtime/int)
     JSAMPROW *volatile rows = nullptr;
     volatile bool created = false;
+    // The arena and the hooks outlive the setjmp below (both are set up before it and live in this frame).
+    hmb_arena::Scope arena;
+    ArenaHooks hooks = {};
 
     std::memset(&cinfo, 0, sizeof cinfo);
     cinfo.err = jpegli_std_error(&error.manager);
@@ -84,6 +152,7 @@ int hmb_jpegli_encode(const uint8_t *rgba, uint32_t width, uint32_t height, size
 
     if (setjmp(error.env)) {
         if (created) jpegli_destroy_compress(&cinfo);
+        arena.discard();          // containers whose destructors the longjmp skipped are unreachable now
         std::free(output.data);
         std::free(rows);
         return fail(err, err_len, "jpegli: %s", error.message[0] ? error.message : "unknown error");
@@ -91,6 +160,15 @@ int hmb_jpegli_encode(const uint8_t *rgba, uint32_t width, uint32_t height, size
 
     jpegli_create_compress(&cinfo);
     created = true;
+    hooks.alloc_small = cinfo.mem->alloc_small;
+    hooks.alloc_large = cinfo.mem->alloc_large;
+    hooks.free_pool = cinfo.mem->free_pool;
+    hooks.self_destruct = cinfo.mem->self_destruct;
+    cinfo.client_data = &hooks;
+    cinfo.mem->alloc_small = arena_alloc_small;
+    cinfo.mem->alloc_large = arena_alloc_large;
+    cinfo.mem->free_pool = arena_free_pool;
+    cinfo.mem->self_destruct = arena_self_destruct;
     jpegli_mem_dest(&cinfo, &output.data, &output.size);
     cinfo.image_width = width;
     cinfo.image_height = height;

@@ -39,6 +39,10 @@ public struct OldEngineRunner: Sendable {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments + ["-o", output.path] + photos.map(\.url.path)
+        // `hmb` runs with MallocLargeCache=0 (D-ENG-10); the old engine keeps its own default allocator behaviour.
+        var environment = ProcessInfo.processInfo.environment
+        environment["MallocLargeCache"] = nil
+        process.environment = environment
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice

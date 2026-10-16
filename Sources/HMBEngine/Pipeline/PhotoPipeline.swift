@@ -74,7 +74,13 @@ struct PhotoPipeline {
             if let source { return source }
             if decodeFailure != nil { return nil }
             do {
-                let image = try c.primitives.decoder.decode(info)
+                MemoryTrace.mark("before decode")
+                let image = try MemoryTrace.during(.decode) {
+                    try c.lane.decoding(pixels: photo.pixelWidth * photo.pixelHeight, cancel: c.cancel) {
+                        try c.primitives.decoder.decode(info)
+                    }
+                }
+                MemoryTrace.mark("after decode")
                 source = image
                 return image
             } catch {
@@ -119,6 +125,9 @@ struct PhotoPipeline {
                     source = nil
                     variants.removeAll()
                 }
+                MemoryTrace.mark("before archive")
+                MemoryTrace.enter(.archive)
+                defer { MemoryTrace.leave(.archive); MemoryTrace.mark("after archive") }
                 let product = try JXLArchive.make(info, sourceExtension: photo.url.pathExtension, jxl: c.primitives.jxl,
                                                   cancel: c.cancel, label: photo.relativePath,
                                                   pixels: photo.pixelWidth * photo.pixelHeight, memory: c.lane.memory)
@@ -134,8 +143,12 @@ struct PhotoPipeline {
                 if preset.quality == .balanced || c.constants.chromaGate, features == nil {
                     features = c.primitives.processing.features(s)
                 }
-                result = try lossy(photo, info: info, source: s, features: features, plan: plan,
-                                   variant: variant(s, colour: preset.colour, longEdge: preset.size.longEdge), lap: lap)
+                let v = variant(s, colour: preset.colour, longEdge: preset.size.longEdge)
+                let phase: MemoryTrace.Phase = v.pixelCount > MetricLane.fullResolutionPixels ? .full : .small
+                MemoryTrace.mark("before \(preset.id.rawValue)")
+                MemoryTrace.enter(phase)
+                defer { MemoryTrace.leave(phase); MemoryTrace.mark("after \(preset.id.rawValue)") }
+                result = try lossy(photo, info: info, source: s, features: features, plan: plan, variant: v, lap: lap)
             } else {
                 result = failed(photo, plan, decodeFailure ?? .unreadable, seconds: lap())
             }
@@ -164,7 +177,8 @@ struct PhotoPipeline {
             search = try c.lane.withReference(v, cancel: c.cancel) { ref -> SearchResult in
                 func verify(_ data: Data) throws -> Double {
                     try c.cancel.check()
-                    return try c.lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: c.cancel)
+                    let candidate = try c.lane.decoding(pixels: v.pixelCount, cancel: c.cancel) { try p.decoder.decode(encoded: data) }
+                    return try c.lane.score(candidate, against: ref, cancel: c.cancel)
                 }
                 func jpegProbe(_ d: Double, _ chroma: ChromaSubsampling) throws -> ProbeRecord {
                     try c.cancel.check()

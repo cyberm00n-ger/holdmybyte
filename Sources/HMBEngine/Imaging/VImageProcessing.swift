@@ -35,9 +35,29 @@ public struct VImageProcessing: ImageProcessing {
         var destination = vImage_Buffer(data: output.pixels.baseAddress, height: vImagePixelCount(output.height),
                                         width: vImagePixelCount(output.width), rowBytes: output.bytesPerRow)
         // The X byte is 255 or ignored everywhere, so scaling it like a colour channel is harmless.
-        let error = vImageScale_ARGB8888(&source, &destination, nil, vImage_Flags(kvImageHighQualityResampling))
+        // The scratch buffer (~56 MB for 45 MP → 2560 px) is our own mapping, returned at once: vImage's own came
+        // from malloc, which keeps freed blocks of that size resident (D-ENG-10). Scratch only, so the pixels are
+        // the same.
+        let flags = vImage_Flags(kvImageHighQualityResampling)
+        let scratchBytes = vImageScale_ARGB8888(&source, &destination, nil, flags | vImage_Flags(kvImageGetTempBufferSize))
+        let scratch = scratchBytes > 0 ? ScratchMapping(bytes: scratchBytes) : nil
+        let error = vImageScale_ARGB8888(&source, &destination, scratch?.pointer, flags)
+        withExtendedLifetime(scratch) {}
         precondition(error == kvImageNoError, "vImageScale_ARGB8888 failed (\(error))")
         return output
+    }
+
+    /// An anonymous mapping for scratch memory, unmapped on deinit.
+    final class ScratchMapping {
+        let pointer: UnsafeMutableRawPointer?
+        private let length: Int
+        init(bytes: Int) {
+            let page = Int(getpagesize())
+            length = (max(bytes, 1) + page - 1) / page * page
+            let base = mmap(nil, length, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+            pointer = base == MAP_FAILED ? nil : base
+        }
+        deinit { if let pointer { munmap(pointer, length) } }
     }
 
     // MARK: Colour

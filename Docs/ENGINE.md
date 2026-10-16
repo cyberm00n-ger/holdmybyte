@@ -26,7 +26,9 @@ Tests: `Tests/HMBEngineTests/Pipeline` (fakes; live tests gated on `EnginePrimit
 | `JXLArchive` | `Pipeline/JXLArchive.swift` | §3.6 |
 | `MetadataEditor`, `TIFFDocument`, `JPEGContainer` | `Metadata/*` | §3.7 |
 | `JobRunner`, `Journal`, `ProgressCoalescer`, `PhotoRate` | `Jobs/*` | §3.8 |
-| `WorkerPool`, `CancelToken`, `Locked` | `Jobs/Concurrency.swift` | §3.9 |
+| `WorkerPool` (two kinds, admission), `CancelToken`, `Locked` | `Jobs/Concurrency.swift` | §3.9 |
+| `MemoryPlan` (workers, archive lanes), `MemoryTrace` (`HMB_MEMTRACE`) | `Jobs/MemoryPlan.swift`, `Jobs/MemoryTrace.swift` | §3.9 |
+| Codec arenas (libjxl, jpegli working memory) | `CHMBCodecs/arena.cc` | §3.9 |
 | `Estimator`, `LearnedEstimates`, `DeliveryKind` | `Estimate/Estimator.swift` | §3.10 |
 
 ## 2. Per-photo pipeline (§3.3)
@@ -36,7 +38,8 @@ One worker thread takes one photo end to end:
 1. `inspect(url)`. A failure is classified: source root gone → the job pauses with `.sourceUnavailable(volume)`;
    file gone but root present → `.failed(.sourceMissing)`; otherwise `.failed(.unreadable)` for every delivery.
 2. CMYK → every lossy delivery `.failed(.cmykUnsupported)`; the archive is still attempted.
-3. The source is decoded at most once, lazily (an archive-only job never decodes). Features are computed only
+3. The source is decoded at most once, lazily (an archive-only job never decodes). Since D-ENG-10 the archive is a
+   separate work item of the photo (§8), so "execution order" below applies to the lossy deliveries. Features are computed only
    when a Balanced delivery (or the chroma gate) needs them.
 4. Deliveries run in execution order: resized lossy by ascending long edge → full-size lossy → archive.
    Variants are cached per photo: one sRGB conversion, one resize per (colour, long edge).
@@ -277,7 +280,9 @@ over completion intervals, seeded with the first interval / worker count; nil un
 
 Huffman JPEG sources: `transcodeLossless(effort: 7)`, `reconstructJPEG`, SHA-256 compare → `.jxl`, `.done`,
 `byteExact = true`. libjxl holds ~1.4 GB for a 45 MP JPEG whatever the effort (cjxl 0.12 e3/e5/e7: 1.39 GB max
-RSS, identical output), 2.4–2.7 CPU-s per transcode + verification at load 6–9. With an optional `MemoryBudget`
+RSS, identical output), 2.4–2.7 CPU-s per transcode + verification at load 6–9. Since D-ENG-10 all of libjxl's
+working memory comes from a per-call arena that is returned when the call ends (peak 1.32 GB, nothing retained),
+and archives are their own work items, at most `MemoryPlan.archiveLanes` at once (§8). With an optional `MemoryBudget`
 (D-ENG-7) the transcode and its verification reserve 33 B/px. Anything else, or any transcode/verification failure (logged): the original bytes copied,
 `.keptOriginal`, encoder `copy`, `byteExact = true`, source extension.
 
@@ -320,29 +325,65 @@ job whose photo set was estimated in this session; time is attributed to deliver
   pool only sees `AsyncStream` and continuations.
 - `MetricLane`: one per `LiveEngine`, shared by the running job and by estimates; one lock around every metric
   call (prepare, score, release). Waiting for the lock polls the cancel token every 20 ms, and the token is checked
-  again once the lock is held, so queued workers do not each spend a GPU score after a pause. References above
-  8 MP take one of 3 slots (counting semaphore, cancellable wait). A worker holds at most one full-resolution
-  reference, and releases its pixels before the archive transcode.
-- `MemoryBudget` (D-ENG-7, `EngineOptions.memoryBudget`, `HMB_MEMORY_BUDGET` for `hmb`; **off by default**): one
-  weighted, cancellable budget shared by full-resolution references (36 B/px, 1.6 GB at 45 MP) and archive
-  transcodes (33 B/px, 1.5 GB). A worker holds at most one reservation, so it cannot deadlock; a reservation larger
-  than the budget runs alone. Measured (release, 8 workers, `/usr/bin/time -l`):
+  again once the lock is held, so queued workers do not each spend a GPU score after a pause. Full-size searches
+  (references above 8 MP) take one of 3 slots and full-size decodes one of 2 (counting semaphores, cancellable
+  waits). Since D-ENG-10 references above 3 MP are **deferred**: the handle keeps only the caller's pixels and every
+  score rebuilds the GPU pyramid under the lane, into pooled storage, right before scoring (bit-identical scores;
+  ~35 ms GPU per full-size score). The 2048×1024 mosaic keeps a live reference.
+- Memory plan and work items (D-ENG-10, `Jobs/MemoryPlan.swift`, `Jobs/Concurrency.swift`): a job's work is split
+  into two kinds, a photo's **archive** (file bytes only) and its **lossy deliveries** (one decode shared by all),
+  pulled by the same worker threads. `MemoryPlan` models the peak per pixel of the largest photo — base 0.3 GB,
+  metric pools 32 B/px, archive transcode 30 B/px, lossy worker 6 B/px, + 6 B/px for each of ≤ 3 full-size searches —
+  against a budget of 8 GB but at most half the Mac's memory, gives archives ~3/8 of the workers (all of them in an
+  archive-only job) and drops workers until the model fits. At 45 MP with 8 processor workers: **7 workers, 3 archive
+  lanes**, model 7.75 GB. While lossy work is queued an archive starts only in a free lane and the worker takes lossy
+  work instead (no idling); when the last lossy item ends the metric pools are drained and archives may take what
+  lossy work and the pools gave back (tail). `EngineOptions.archiveConcurrency` / `HMB_ARCHIVE_LANES` override the
+  lanes for tuning runs (and keep the worker count as given).
+- Allocation (D-ENG-10). macOS malloc keeps freed blocks resident: large blocks dirty in its large-block cache (a
+  200 MB block freed stays in the footprint; tested up to 8 GB on this 64 GB Mac, `malloc_zone_pressure_relief`,
+  memory-pressure events and a destroyed `malloc_create_zone` zone release nothing), small regions as "reusable"
+  pages that still count as resident. Only `MallocLargeCache=0` at process start returns them, which an engine
+  library cannot set. So the large buffers no longer come from malloc:
+  - `PixelImage` ≥ 1 MB: its own anonymous mapping, unmapped in deinit (also skips the 180 MB memset; the kernel
+    zero-fills).
+  - libjxl: `JxlMemoryManager` (image planes) and libjxl's C++ containers (global `operator new`, replaced in
+    `CHMBCodecs/arena.cc`) are served from a per-call **arena** while a transcode or reconstruction runs on that
+    thread: one slot of a reserved address range, size classes and coalesced page runs, all pages dropped when the
+    call ends. Outside a scope the replacement is exactly malloc/free; `operator delete` recognises arena blocks by
+    address. A 45 MP transcode now peaks at 1.32 GB and leaves 0 bytes behind (was 1.56 GB peak, 0.9 GB left in
+    malloc per concurrent transcode).
+  - jpegli: `cinfo->mem` allocations (coefficient planes, ~140 MB at 45 MP 4:2:0) come from the same arena.
+  - vImage's Lanczos scratch (56 MB at 45 MP → 2560 px) is a mapping passed as `tempBuffer`.
+  - Metal pools are keyed orientation-free (landscape and portrait share one working set and one reference) with a
+    2 GB LRU byte limit instead of 3 geometries, which the 7 geometries of a four-delivery job kept evicting.
+- Remaining footprint at 45 MP (vmmap/footprint mid-run, 7 workers): metric pools ~1.65 GB (GPU), archive arenas
+  up to 3 × 1.3 GB, decoded sources and candidates ~1 GB, ImageIO/CMPhoto decode buffers and surfaces ~0.3–0.5 GB.
+- `HMB_MEMTRACE=<file>` (diagnostics, `Jobs/MemoryTrace.swift`): samples footprint, resident size and the number of
+  workers per phase every 0.25 s, plus marks around decodes, deliveries and archives.
+- `MemoryBudget` (D-ENG-7, `EngineOptions.memoryBudget`, `HMB_MEMORY_BUDGET`; off by default) is kept for tuning;
+  with deferred references only archive transcodes reserve from it.
 
-  | Job | Budget | Wall | Peak RSS | Peak footprint | Load |
-  |---|---|---|---|---|---|
-  | Holdout, Archive only | none | 8.8–8.9 s | 12.29–12.54 GB | 11.38–11.83 GB | 5.0–7.9 |
-  | Holdout, Archive only | 9.6 GB | 10.6 s | 11.38 GB | 10.80 GB | 6.8–7.7 |
-  | Holdout, Archive only | 6.4 GB | 13.6 s | 8.39–8.70 GB | 6.81–7.83 GB | 6.8–7.9 |
-  | 80 wedding photos, all four | none | 91 s | 12.14 GB | 11.86 GB | 4.9–6.9 |
-  | 80 wedding photos, all four | 3.2 GB | 172 s | 9.09 GB | 9.21 GB | 6.4–7.6 |
-  | Wedding 535, all four | none | 475 s | 18.54 GB | 18.01 GB | 7.1–10.7 |
-  | Wedding 535, all four | 6.4 GB | 625 s | 19.49 GB | 13.63 GB | 6.2–8.3 |
+  **Measured** (wedding, 535 × 45 MP, all four deliveries, release `hmb compress`, `/usr/bin/time -l`, outputs
+  SHA-256-identical to the baseline in every row; GB = 10⁹ bytes; machine never quiet, Lightroom running):
 
-  So the budget fixes the Archive-only peak at ×1.5 wall time (a G6 risk), but **does not bring the all-four job
-  under 8 GB** even at two heavy allocations: the lossy workers themselves (45 MP source 180 MB, sRGB copy, candidate
-  decodes, jpegli's float planes; Couple only on the holdout: 5.2 GB RSS, 7.8 GB footprint) and macOS malloc's
-  retained free regions (vmmap mid-run: 1.5 GB "MALLOC_LARGE (empty)" + 2.4 GB "MALLOC_SMALL (empty)" resident,
-  not released by `malloc_zone_pressure_relief`; a per-item autorelease pool changed nothing) account for the rest.
+  | Build (cumulative) | Workers / archive lanes | Wall | CPU user + sys | Peak RSS | Peak footprint | 1-min load |
+  |---|---|---|---|---|---|---|
+  | baseline (f8c2e1f) | 8 / – | 501 s | 3118 + 237 s | 19.39 GB | 21.30 GB | 7.2 → 15.5 |
+  | baseline, `MallocLargeCache=0` only | 8 / – | 551 s | 3155 + 447 s | 13.03 GB | 10.61 GB | 6.1 → 21.2 |
+  | + deferred references, orientation-free pools, mapped `PixelImage`, mapped JXL manager | 8 / – | 513 s | 3135 + 266 s | 14.70 GB | 9.38 GB | 11.7 → 17.6 |
+  | + archive items, 3 lanes, `MallocLargeCache=0` | 8 / 3 | 564 s | 3181 + 439 s | 10.62 GB | 6.42 GB | 9.3 → 10.9 |
+  | + codec arenas (libjxl, jpegli), no env | 8 / 3 | 518 s | 3104 + 364 s | 7.87 GB | 8.56 GB | 8.4 → 10.3 |
+  | + memory plan, pool drain | 7 / 3 | 522 s | 3041 + 332 s | 7.31 GB | 8.04 GB | 7.9 → 8.1 |
+  | + 2 decode slots, vImage scratch | 7 / 3 | (slept) 645 s awake | 3173 + 356 s | 7.34 GB | 8.22 GB | 30 → 19, swapping |
+  | **+ `hmb` re-exec with `MallocLargeCache=0` (shipped)** | **7 / 3** | (slept) 573 s awake | 3278 + 396 s | **6.87 GB** | **7.24 GB** | 11 → 20, swapping |
+  | A/B 11:00, baseline | 8 / – | 513.6 s | 3148 + 255 s | 18.82 GB | 19.55 GB | 14.4 → 10.2 |
+  | A/B 11:06, shipped | 7 / 3 | **564.4 s (+9.9 %)** | 3123 + 410 s | **7.18 GB** | **7.42 GB** | 6.1 → 13.2 |
+
+  "Slept": from 01:00 the Mac went into maintenance sleep repeatedly and swapped (16.4 of 17.4 GB swap used by other
+  processes), so wall clock includes sleep; "awake" is `mach_absolute_time` across the run. Timing comparisons use
+  the A/B pair in Docs/BENCHMARKS.md. 60-photo screens (same outputs) gave the same ordering: 8 / 3 lanes without the
+  plan 8.26–8.63 GB footprint, 7 / 3 7.52–7.74 GB, + `MallocLargeCache=0` 7.15 GB; 2 lanes 7.21 GB at +15 % wall.
 - Variants no later delivery needs are dropped before each delivery: the full-resolution sRGB copy made for Website
   and Social no longer lives through the Couple's Package search (180 MB per worker at 45 MP).
 - Determinism: names fixed up front, encoders single-threaded per image (WP1), no randomness or time in outputs;
