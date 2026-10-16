@@ -757,3 +757,260 @@ int rewrite(const uint8_t *jpeg, size_t size, const hmb_jpeg_rewrite_options *la
 }
 
 }  // namespace
+
+// MARK: libjpeg-turbo-equivalent decode (decoder guard, Docs/DECISIONS.md D-ENG-12)
+//
+// The pixels libjpeg-turbo's default decompressor produces (djpeg; Chrome, Firefox and Edge): jpeg-6b's integer
+// "ISLOW" IDCT with its range-limit table, h2v2 "fancy" (triangle) chroma upsampling with libjpeg's context rows, and
+// the fixed-point YCbCr → RGB tables of jdcolor.c. jpegli only reads the coefficients (entropy decoding is exact in
+// every decoder); everything after that is reimplemented here from the IJG algorithms, so nothing new is vendored.
+// `DecoderAuditTests` / `IslowDecodeTests` check the output against djpeg pixel for pixel.
+namespace {
+
+constexpr int kIslowConstBits = 13;
+constexpr int kIslowPass1Bits = 2;
+
+inline int64_t islow_descale(int64_t x, int n) { return (x + (int64_t(1) << (n - 1))) >> n; }
+
+// libjpeg's post-IDCT range limit: index = centred sample & 1023.
+struct IslowTables {
+    uint8_t idct_limit[1024];
+    IslowTables() {
+        for (int m = 0; m < 1024; ++m) {
+            idct_limit[m] = m < 128 ? uint8_t(m + 128) : m < 512 ? 255 : m < 896 ? 0 : uint8_t(m - 896);
+        }
+    }
+};
+// jdcolor.c's YCbCr → RGB tables, as arithmetic (the tables hold exactly these values): FIX(x) = x · 2^16 rounded.
+constexpr int32_t islow_fix(double v) { return int32_t(v * 65536.0 + 0.5); }
+constexpr int32_t kCrR = islow_fix(1.40200), kCbB = islow_fix(1.77200), kCrG = islow_fix(0.71414), kCbG = islow_fix(0.34414);
+constexpr int32_t kHalf = 1 << 15;
+const IslowTables &islow_tables() {
+    static const IslowTables tables;
+    return tables;
+}
+
+// jidctint.c (jpeg-6b / libjpeg-turbo) for one block: natural-order coefficients and quantisers.
+void islow_idct(const JCOEF *in, const uint16_t *q, uint8_t *out, size_t stride, const uint8_t *limit) {
+    int ws[64];
+    for (int col = 0; col < 8; ++col) {
+        const JCOEF *ip = in + col;
+        const uint16_t *qp = q + col;
+        int *wp = ws + col;
+        if (ip[8] == 0 && ip[16] == 0 && ip[24] == 0 && ip[32] == 0 && ip[40] == 0 && ip[48] == 0 && ip[56] == 0) {
+            const int dc = int(ip[0]) * int(qp[0]) * (1 << kIslowPass1Bits);
+            for (int k = 0; k < 8; ++k) wp[8 * k] = dc;
+            continue;
+        }
+        int64_t z2 = int64_t(ip[16]) * qp[16], z3 = int64_t(ip[48]) * qp[48];
+        int64_t z1 = (z2 + z3) * 4433;                          // FIX_0_541196100
+        int64_t tmp2 = z1 + z3 * -15137;                        // FIX_1_847759065
+        int64_t tmp3 = z1 + z2 * 6270;                          // FIX_0_765366865
+        z2 = int64_t(ip[0]) * qp[0];
+        z3 = int64_t(ip[32]) * qp[32];
+        int64_t tmp0 = (z2 + z3) * (int64_t(1) << kIslowConstBits);
+        int64_t tmp1 = (z2 - z3) * (int64_t(1) << kIslowConstBits);
+        const int64_t tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3, tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+        tmp0 = int64_t(ip[56]) * qp[56];
+        tmp1 = int64_t(ip[40]) * qp[40];
+        tmp2 = int64_t(ip[24]) * qp[24];
+        tmp3 = int64_t(ip[8]) * qp[8];
+        z1 = tmp0 + tmp3;
+        z2 = tmp1 + tmp2;
+        z3 = tmp0 + tmp2;
+        int64_t z4 = tmp1 + tmp3;
+        const int64_t z5 = (z3 + z4) * 9633;                    // FIX_1_175875602
+        tmp0 *= 2446; tmp1 *= 16819; tmp2 *= 25172; tmp3 *= 12299;
+        z1 *= -7373; z2 *= -20995; z3 *= -16069; z4 *= -3196;
+        z3 += z5; z4 += z5;
+        tmp0 += z1 + z3; tmp1 += z2 + z4; tmp2 += z2 + z3; tmp3 += z1 + z4;
+        constexpr int s = kIslowConstBits - kIslowPass1Bits;
+        wp[0] = int(islow_descale(tmp10 + tmp3, s));
+        wp[56] = int(islow_descale(tmp10 - tmp3, s));
+        wp[8] = int(islow_descale(tmp11 + tmp2, s));
+        wp[48] = int(islow_descale(tmp11 - tmp2, s));
+        wp[16] = int(islow_descale(tmp12 + tmp1, s));
+        wp[40] = int(islow_descale(tmp12 - tmp1, s));
+        wp[24] = int(islow_descale(tmp13 + tmp0, s));
+        wp[32] = int(islow_descale(tmp13 - tmp0, s));
+    }
+    for (int row = 0; row < 8; ++row) {
+        const int *wp = ws + 8 * row;
+        uint8_t *op = out + size_t(row) * stride;
+        if (wp[1] == 0 && wp[2] == 0 && wp[3] == 0 && wp[4] == 0 && wp[5] == 0 && wp[6] == 0 && wp[7] == 0) {
+            const uint8_t v = limit[islow_descale(wp[0], kIslowPass1Bits + 3) & 1023];
+            for (int k = 0; k < 8; ++k) op[k] = v;
+            continue;
+        }
+        int64_t z2 = wp[2], z3 = wp[6];
+        int64_t z1 = (z2 + z3) * 4433;
+        int64_t tmp2 = z1 + z3 * -15137;
+        int64_t tmp3 = z1 + z2 * 6270;
+        int64_t tmp0 = (int64_t(wp[0]) + wp[4]) * (int64_t(1) << kIslowConstBits);
+        int64_t tmp1 = (int64_t(wp[0]) - wp[4]) * (int64_t(1) << kIslowConstBits);
+        const int64_t tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3, tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+        tmp0 = wp[7]; tmp1 = wp[5]; tmp2 = wp[3]; tmp3 = wp[1];
+        z1 = tmp0 + tmp3;
+        z2 = tmp1 + tmp2;
+        z3 = tmp0 + tmp2;
+        int64_t z4 = tmp1 + tmp3;
+        const int64_t z5 = (z3 + z4) * 9633;
+        tmp0 *= 2446; tmp1 *= 16819; tmp2 *= 25172; tmp3 *= 12299;
+        z1 *= -7373; z2 *= -20995; z3 *= -16069; z4 *= -3196;
+        z3 += z5; z4 += z5;
+        tmp0 += z1 + z3; tmp1 += z2 + z4; tmp2 += z2 + z3; tmp3 += z1 + z4;
+        constexpr int s = kIslowConstBits + kIslowPass1Bits + 3;
+        op[0] = limit[islow_descale(tmp10 + tmp3, s) & 1023];
+        op[7] = limit[islow_descale(tmp10 - tmp3, s) & 1023];
+        op[1] = limit[islow_descale(tmp11 + tmp2, s) & 1023];
+        op[6] = limit[islow_descale(tmp11 - tmp2, s) & 1023];
+        op[2] = limit[islow_descale(tmp12 + tmp1, s) & 1023];
+        op[5] = limit[islow_descale(tmp12 - tmp1, s) & 1023];
+        op[3] = limit[islow_descale(tmp13 + tmp0, s) & 1023];
+        op[4] = limit[islow_descale(tmp13 - tmp0, s) & 1023];
+    }
+}
+
+// jdsample.c h2v2_fancy_upsample for one output row: `near` is the chroma row of this output row, `far` the row above
+// (even output rows) or below (odd), both `width` (downsampled_width > 2) samples; writes 2 × width samples.
+void fancy_h2v2_row(const uint8_t *near, const uint8_t *far, int width, uint8_t *out) {
+    int this_sum = near[0] * 3 + far[0];
+    int next_sum = near[1] * 3 + far[1];
+    *out++ = uint8_t((this_sum * 4 + 8) >> 4);
+    *out++ = uint8_t((this_sum * 3 + next_sum + 7) >> 4);
+    int last_sum = this_sum;
+    this_sum = next_sum;
+    for (int x = 2; x < width; ++x) {
+        next_sum = near[x] * 3 + far[x];
+        *out++ = uint8_t((this_sum * 3 + last_sum + 8) >> 4);
+        *out++ = uint8_t((this_sum * 3 + next_sum + 7) >> 4);
+        last_sum = this_sum;
+        this_sum = next_sum;
+    }
+    *out++ = uint8_t((this_sum * 3 + last_sum + 8) >> 4);
+    *out++ = uint8_t((this_sum * 4 + 7) >> 4);
+}
+
+}  // namespace
+
+int hmb_jpeg_decode_islow(const uint8_t *jpeg, size_t size, uint8_t *rgbx, uint32_t width, uint32_t height,
+                          size_t stride, char *err, size_t err_len) {
+    if (jpeg == nullptr || rgbx == nullptr || stride < size_t(width) * 4) return fail(err, err_len, "hmb_jpeg_decode_islow: bad arguments");
+    jpeg_decompress_struct dinfo;
+    HMBJpegError error;
+    volatile bool created = false;
+    hmb_arena::Scope arena;
+    ArenaHooks hooks = {};
+    std::memset(&dinfo, 0, sizeof dinfo);
+    dinfo.err = jpegli_std_error(&error.manager);
+    error.manager.error_exit = hmb_jpegli_error_exit;
+    error.manager.output_message = hmb_jpegli_output_message;
+    error.message[0] = '\0';
+    if (setjmp(error.env)) {
+        if (created) jpegli_destroy_decompress(&dinfo);
+        arena.discard();
+        return fail(err, err_len, "islow decode: %s", error.message[0] ? error.message : "unknown error");
+    }
+    jpegli_create_decompress(&dinfo);
+    created = true;
+    hooks.alloc_small = dinfo.mem->alloc_small;
+    hooks.alloc_large = dinfo.mem->alloc_large;
+    hooks.free_pool = dinfo.mem->free_pool;
+    hooks.self_destruct = dinfo.mem->self_destruct;
+    dinfo.client_data = &hooks;
+    dinfo.mem->alloc_small = arena_alloc_small;
+    dinfo.mem->alloc_large = arena_alloc_large;
+    dinfo.mem->free_pool = arena_free_pool;
+    dinfo.mem->self_destruct = arena_self_destruct;
+    jpegli_mem_src(&dinfo, jpeg, static_cast<unsigned long>(size));  // NOLINT(runtime/int)
+    jpegli_read_header(&dinfo, TRUE);
+
+    const int maxh = dinfo.max_h_samp_factor, maxv = dinfo.max_v_samp_factor;
+    bool supported = dinfo.num_components == 3 && dinfo.jpeg_color_space == JCS_YCbCr && dinfo.data_precision == 8 &&
+                     ((maxh == 1 && maxv == 1) || (maxh == 2 && maxv == 2)) &&
+                     dinfo.comp_info[0].h_samp_factor == maxh && dinfo.comp_info[0].v_samp_factor == maxv;
+    for (int c = 1; c < 3 && supported; ++c) {
+        supported = dinfo.comp_info[c].h_samp_factor == 1 && dinfo.comp_info[c].v_samp_factor == 1;
+    }
+    if (!supported) {
+        jpegli_destroy_decompress(&dinfo);
+        created = false;
+        return 1;
+    }
+    if (dinfo.image_width != width || dinfo.image_height != height) {
+        jpegli_destroy_decompress(&dinfo);
+        created = false;
+        return fail(err, err_len, "islow decode: image is %ux%u, buffer %ux%u", dinfo.image_width, dinfo.image_height, width, height);
+    }
+    jvirt_barray_ptr *coefficients = jpegli_read_coefficients(&dinfo);
+    const IslowTables &t = islow_tables();
+
+    // IDCT every component into a plane of whole blocks.
+    std::vector<uint8_t> planes[3];
+    size_t pstride[3];
+    int dw[3], dh[3];
+    for (int c = 0; c < 3; ++c) {
+        jpeg_component_info *comp = &dinfo.comp_info[c];
+        const JQUANT_TBL *table = comp->quant_table != nullptr ? comp->quant_table : dinfo.quant_tbl_ptrs[comp->quant_tbl_no];
+        if (table == nullptr) {
+            jpegli_destroy_decompress(&dinfo);
+            created = false;
+            return fail(err, err_len, "islow decode: component %d has no quantisation table", c);
+        }
+        uint16_t q[64];
+        for (int k = 0; k < 64; ++k) q[k] = table->quantval[k];
+        const int bw = int(comp->width_in_blocks), bh = int(comp->height_in_blocks);
+        pstride[c] = size_t(bw) * 8;
+        planes[c].resize(pstride[c] * size_t(bh) * 8);
+        dw[c] = int((uint64_t(width) * uint64_t(comp->h_samp_factor) + uint64_t(maxh) - 1) / uint64_t(maxh));
+        dh[c] = int((uint64_t(height) * uint64_t(comp->v_samp_factor) + uint64_t(maxv) - 1) / uint64_t(maxv));
+        for (int by = 0; by < bh; ++by) {
+            JBLOCKARRAY rows = (*dinfo.mem->access_virt_barray)(reinterpret_cast<j_common_ptr>(&dinfo), coefficients[c],
+                                                               static_cast<JDIMENSION>(by), 1, FALSE);
+            uint8_t *dst = planes[c].data() + size_t(by) * 8 * pstride[c];
+            for (int bx = 0; bx < bw; ++bx) islow_idct(rows[0][bx], q, dst + size_t(bx) * 8, pstride[c], t.idct_limit);
+        }
+    }
+    jpegli_finish_decompress(&dinfo);
+    jpegli_destroy_decompress(&dinfo);
+    created = false;
+
+    // Upsample (h2v2 fancy, context rows duplicated at the top and bottom edges) and convert, row by row.
+    const bool h2v2 = maxh == 2;
+    std::vector<uint8_t> up[2];
+    if (h2v2) {
+        up[0].resize(size_t(dw[1]) * 2 + 2);
+        up[1].resize(size_t(dw[2]) * 2 + 2);
+    }
+    auto clamp = [](int32_t v) { return uint8_t(std::min(255, std::max(0, v))); };
+    for (uint32_t y = 0; y < height; ++y) {
+        const uint8_t *yrow = planes[0].data() + size_t(y) * pstride[0];
+        const uint8_t *chroma[2];
+        for (int c = 1; c < 3; ++c) {
+            if (!h2v2) {
+                chroma[c - 1] = planes[c].data() + size_t(y) * pstride[c];
+                continue;
+            }
+            const int k = int(y / 2);
+            const int far = (y % 2 == 0) ? std::max(0, k - 1) : std::min(dh[c] - 1, k + 1);
+            const uint8_t *near_row = planes[c].data() + size_t(k) * pstride[c];
+            const uint8_t *far_row = planes[c].data() + size_t(far) * pstride[c];
+            if (dw[c] > 2) {                             // jdsample.c: fancy only when downsampled_width > 2
+                fancy_h2v2_row(near_row, far_row, dw[c], up[c - 1].data());
+            } else {                                     // h2v2_upsample (box)
+                for (int x = 0; x < dw[c]; ++x) up[c - 1][2 * x] = up[c - 1][2 * x + 1] = near_row[x];
+            }
+            chroma[c - 1] = up[c - 1].data();
+        }
+        uint8_t *out = rgbx + size_t(y) * stride;
+        const uint8_t *cbrow = chroma[0], *crrow = chroma[1];
+        for (uint32_t x = 0; x < width; ++x) {          // ycc_rgb_convert (vectorisable: no table lookups)
+            const int32_t yy = yrow[x], cb = int32_t(cbrow[x]) - 128, cr = int32_t(crrow[x]) - 128;
+            out[4 * x] = clamp(yy + ((kCrR * cr + kHalf) >> 16));
+            out[4 * x + 1] = clamp(yy + ((-kCbG * cb - kCrG * cr + kHalf) >> 16));
+            out[4 * x + 2] = clamp(yy + ((kCbB * cb + kHalf) >> 16));
+            out[4 * x + 3] = 255;
+        }
+    }
+    return 0;
+}

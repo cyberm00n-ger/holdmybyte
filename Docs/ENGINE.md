@@ -453,7 +453,8 @@ job whose photo set was estimated in this session; time is attributed to deliver
   scores no longer take the lane lock (each caller has its own pooled working set); a deferred 45 MP score builds the
   pyramid and scores in one command buffer. The jpegli progressive tokenisers skip zero coefficients through two
   64-bit masks per block (`Vendor/patches/libjxl/0001-jpegli-tokenize-masks.patch`, applied by
-  `Scripts/build-codecs.sh`; `Vendor/codecs.lock` pins the patched archive; `EncoderGoldenTests` compares 784 outputs
+  `Scripts/build-codecs.sh`; `Vendor/codecs.lock` pins the patched archive, since D-ENG-12 with normalised ar headers
+  (`6e8cf4a9…`, same members as `3e81407d…`); `EncoderGoldenTests` compares 784 outputs
   with the unpatched build). Couple-only jobs now peak at 5.2–6.0 GB footprint (was 3.8–4.2 GB); four-delivery jobs are
   unchanged.
 - Variants no later delivery needs are dropped before each delivery: the full-resolution sRGB copy made for Website

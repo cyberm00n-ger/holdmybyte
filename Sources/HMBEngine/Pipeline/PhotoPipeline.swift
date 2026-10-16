@@ -179,46 +179,93 @@ struct PhotoPipeline {
         let scanChoices = Locked([ChromaSubsampling: JPEGScanChoice]())
         do {
             search = try Spans.measure("search+slotwait") { try c.lane.withReference(v, cancel: c.cancel) { ref -> SearchResult in
-                func verify(_ data: Data) throws -> Double {
+                // D-ENG-12 decoder guard: the second (libjpeg-turbo) decode takes a decode slot like the first.
+                func guardDecode(_ body: () throws -> PixelImage?) throws -> PixelImage? {
                     try c.cancel.check()
-                    let candidate = try Spans.measure("probe.decode+wait") {
-                        try c.lane.decoding(pixels: v.pixelCount, cancel: c.cancel) {
-                            try Spans.measure("probe.decode") { try p.decoder.decode(encoded: data) }
-                        }
-                    }
-                    return try Spans.measure("probe.score+wait") { try c.lane.score(candidate, against: ref, cancel: c.cancel) }
+                    return try c.lane.decoding(pixels: v.pixelCount, cancel: c.cancel) { try Spans.measure("probe.guard.decode", body) }
                 }
-                func jpegProbe(_ tuning: JPEGTuning) -> (Double, ChromaSubsampling) throws -> ProbeRecord {
+                func guardScore(_ second: PixelImage) throws -> Double {
+                    try Spans.measure("probe.guard.score+wait") { try c.lane.score(second, against: ref, cancel: c.cancel) }
+                }
+                /// ImageIO score of an encoded candidate; with `guarded`, the decoder guard's score (D-ENG-12).
+                func verify(_ data: Data, chroma: ChromaSubsampling? = nil, guarded: Bool = true) throws -> Double {
+                    try c.cancel.check()
+                    let (score, width, height, space) = try {
+                        let candidate = try Spans.measure("probe.decode+wait") {
+                            try c.lane.decoding(pixels: v.pixelCount, cancel: c.cancel) {
+                                try Spans.measure("probe.decode") { try p.decoder.decode(encoded: data) }
+                            }
+                        }
+                        let score = try Spans.measure("probe.score+wait") { try c.lane.score(candidate, against: ref, cancel: c.cancel) }
+                        return (score, candidate.width, candidate.height, candidate.colorSpace)
+                    }()
+                    guard guarded else { return score }
+                    // The ImageIO candidate is gone before the libjpeg-turbo decode starts.
+                    return try c.constants.decoderGuard.score(score, target: target, chroma: chroma, data: data, width: width,
+                                                              height: height, colorSpace: space, decode: guardDecode, score: guardScore)
+                }
+                func jpegProbe(_ tuning: JPEGTuning, guarded: Bool = true) -> (Double, ChromaSubsampling) throws -> ProbeRecord {
                     { d, chroma in
                         try c.cancel.check()
                         let data = try Spans.measure("probe.encode") {
                             try p.jpeg.encode(v, distance: d, subsampling: chroma, tuning: tuning, markers: markers,
                                               scans: scanChoices.snapshot[chroma])
                         }
-                        return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
+                        return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data, chroma: chroma, guarded: guarded),
+                                           data: data)
                     }
+                }
+                /// D-ENG-12 for full-size searches, where a second decode costs ~0.4 s: the probes are scored by ImageIO
+                /// only and the guard runs on the candidate about to be delivered. If that one reads below T, the next
+                /// smallest passing probe is tried; if none passes, the search runs again with every probe guarded.
+                func guardFinal(_ result: SearchResult, rerun: () throws -> SearchResult) throws -> SearchResult {
+                    guard case .encoded(let best) = result.outcome, c.constants.decoderGuard.applies(to: best.subsampling) else {
+                        return result
+                    }
+                    var out = result
+                    for record in result.probes.filter({ $0.passes(target) }).sorted(by: { $0.bytes < $1.bytes }) {
+                        let score = try c.constants.decoderGuard.score(
+                            record.score, target: target, chroma: record.subsampling, data: record.data, width: v.width,
+                            height: v.height, colorSpace: v.colorSpace, decode: guardDecode, score: guardScore)
+                        guard score >= target else { continue }
+                        if keepAllowed, Double(record.bytes) >= 0.95 * Double(sourceBytes) {
+                            out.outcome = .keepOriginal
+                        } else {
+                            var chosen = record
+                            chosen.score = score
+                            out.outcome = .encoded(chosen)
+                        }
+                        return out
+                    }
+                    Self.log.info("decoder guard: no passing probe reads ≥ \(target) in libjpeg-turbo; searching again with every probe guarded")
+                    var again = try rerun()
+                    again.probes = result.probes + again.probes
+                    return again
                 }
                 func jpegSearch() throws -> SearchResult {
                     if preset.isFullSize, let mosaic = Spans.measure("mosaic.make", { p.processing.mosaic(v) }) {
                         return try c.lane.withReference(mosaic, cancel: c.cancel) { mosaicRef in
-                            let oracle = JPEGSearchOracle(
-                                proxyScore: { d, chroma in
-                                    try c.cancel.check()
-                                    let data = try Spans.measure("mosaic.encode") {
-                                        try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: chroma, tuning: c.constants.jpegTuning)
-                                    }
-                                    // The scan script is chosen from the coefficients, whatever script the mosaic used.
-                                    if c.constants.optimizeScans, scanChoices.snapshot[chroma] == nil,
-                                       let choice = try Spans.measure("mosaic.chooseScans", { try p.jpeg.chooseScans(data) }) {
-                                        scanChoices.withLock { $0[chroma] = choice }
-                                    }
-                                    let decoded = try Spans.measure("mosaic.decode") { try p.decoder.decode(encoded: data) }
-                                    return try Spans.measure("mosaic.score+wait") { try c.lane.score(decoded, against: mosaicRef, cancel: c.cancel) }
-                                },
-                                probe: jpegProbe(c.constants.jpegTuning))
-                            return try MosaicSearch.search(target: target, oracle: oracle, keepOriginalAllowed: keepAllowed,
-                                                           sourceBytes: sourceBytes, chromaEnergy: features?.chromaEnergy ?? 0,
-                                                           constants: c.constants)
+                            func run(guarded: Bool) throws -> SearchResult {
+                                let oracle = JPEGSearchOracle(
+                                    proxyScore: { d, chroma in
+                                        try c.cancel.check()
+                                        let data = try Spans.measure("mosaic.encode") {
+                                            try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: chroma, tuning: c.constants.jpegTuning)
+                                        }
+                                        // The scan script is chosen from the coefficients, whatever script the mosaic used.
+                                        if c.constants.optimizeScans, scanChoices.snapshot[chroma] == nil,
+                                           let choice = try Spans.measure("mosaic.chooseScans", { try p.jpeg.chooseScans(data) }) {
+                                            scanChoices.withLock { $0[chroma] = choice }
+                                        }
+                                        let decoded = try Spans.measure("mosaic.decode") { try p.decoder.decode(encoded: data) }
+                                        return try Spans.measure("mosaic.score+wait") { try c.lane.score(decoded, against: mosaicRef, cancel: c.cancel) }
+                                    },
+                                    probe: jpegProbe(c.constants.jpegTuning, guarded: guarded))
+                                return try MosaicSearch.search(target: target, oracle: oracle, keepOriginalAllowed: keepAllowed,
+                                                               sourceBytes: sourceBytes, chromaEnergy: features?.chromaEnergy ?? 0,
+                                                               constants: c.constants)
+                            }
+                            return try guardFinal(run(guarded: false)) { try run(guarded: true) }
                         }
                     }
                     return try directPostPass(DirectSearch.jpeg(target: target, constants: c.constants,
@@ -245,7 +292,8 @@ struct PhotoPipeline {
                         let k = (lo + hi) / 2
                         guard let data = try JPEGPostPass.rewrite(best.data, minK: k, minRun: 2, componentMask: 7,
                                                                   optimizeScans: true) else { break }   // not a jpegli JPEG
-                        let record = ProbeRecord(parameter: best.parameter, subsampling: best.subsampling, score: try verify(data), data: data)
+                        let record = ProbeRecord(parameter: best.parameter, subsampling: best.subsampling,
+                                                 score: try verify(data, chroma: best.subsampling), data: data)
                         out.probes.append(record)
                         attempts += 1
                         if record.passes(target) {

@@ -52,6 +52,8 @@ func liveEngine() throws -> LiveEngine {
         options.constants.directJPEGTuning = .jpegli
     }
     if environment["HMB_DIRECT444"] == "off" { options.constants.direct444From = .infinity }
+    // Decoder guard (Docs/DECISIONS.md D-ENG-12): HMB_DECODER_GUARD=off|chroma444|all.
+    if let mode = environment["HMB_DECODER_GUARD"].flatMap(DecoderGuard.init(rawValue:)) { options.constants.decoderGuard = mode }
     let webp: WebPTuning = switch environment["HMB_WEBP"] {
     case "spec": .spec
     case "m6": WebPTuning(method: 6)

@@ -70,6 +70,9 @@ public struct SearchConstants: Sendable, Hashable {
     /// rewrites that zero isolated ±1 AC coefficients (bisection over the zigzag start), each re-scored; the
     /// smallest that still reaches the target is delivered. 0 = off.
     public var zeroingAttempts = 4
+    /// Decoder guard (Docs/DECISIONS.md D-ENG-12): which passing JPEG candidates are also scored as libjpeg-turbo
+    /// decodes them, the lower score counting. `.off` reproduces eng-v3 byte for byte.
+    public var decoderGuard: DecoderGuard = .all
     public init() {}
     public static let spec = SearchConstants()
 }
