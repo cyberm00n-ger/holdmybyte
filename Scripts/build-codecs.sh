@@ -42,7 +42,10 @@ if [ -n "${OUTPUT_SHA256:-}" ] && [ "$(current_sha)" = "$OUTPUT_SHA256" ] \
     exit 0
 fi
 
-for tool in git cmake ninja libtool xcodebuild nm otool shasum; do
+# The work path goes into CMAKE_<LANG>_FLAGS (-ffile-prefix-map), which CMake splits at spaces.
+case "$WORK" in *[[:space:]]*) die "the build directory '$WORK' contains a space; set HMB_CODEC_WORK to a path without spaces" ;; esac
+
+for tool in git cmake ninja libtool xcodebuild nm otool shasum perl; do
     command -v "$tool" >/dev/null 2>&1 || die "missing tool: $tool"
 done
 
