@@ -286,7 +286,7 @@ struct Estimator: Sendable {
                                     candidate.colorSpace)
                         }()
                         return try constants.decoderGuard.score(score, target: target, chroma: chroma, data: data, width: width,
-                                                                height: height, colorSpace: space, decode: { try $0() },
+                                                                height: height, colorSpace: space, viewer: p.viewerDecoder, decode: { try $0() },
                                                                 score: { try lane.score($0, against: ref, cancel: cancel) })
                     }
                     let markers = MetadataEditor.jpegMarkers(meta)

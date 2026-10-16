@@ -151,14 +151,20 @@ public struct EnginePrimitives: Sendable {
     public var webp: any WebPEncoding
     public var jxl: any JXLTranscoding
     public var metric: any PerceptualMetric
+    /// Decoder guard (D-ENG-12, addition to §3.2): a JPEG decoded the way libjpeg-turbo's default decompressor does it
+    /// (`IslowDecoder` in `live()`), `width` × `height` in `colorSpace`; nil result = layout not supported. nil = no
+    /// guard (the fakes, whose "JPEGs" are not JPEGs).
+    public typealias ViewerJPEGDecode = @Sendable (_ jpeg: Data, _ width: Int, _ height: Int, _ colorSpace: CGColorSpace) throws -> PixelImage?
+    public var viewerDecoder: ViewerJPEGDecode?
     // `public static func live() throws -> EnginePrimitives` is in Primitives+Live.swift (WP1);
     // `public static func fakes() -> EnginePrimitives` is in Primitives+Fakes.swift (WP0).
 
     /// Memberwise (addition to §3.2, so tests and the bench can mix live and fake components).
     public init(decoder: any ImageDecoding, processing: any ImageProcessing, jpeg: any JPEGEncoding,
-                webp: any WebPEncoding, jxl: any JXLTranscoding, metric: any PerceptualMetric) {
+                webp: any WebPEncoding, jxl: any JXLTranscoding, metric: any PerceptualMetric,
+                viewerDecoder: ViewerJPEGDecode? = nil) {
         self.decoder = decoder; self.processing = processing; self.jpeg = jpeg
-        self.webp = webp; self.jxl = jxl; self.metric = metric
+        self.webp = webp; self.jxl = jxl; self.metric = metric; self.viewerDecoder = viewerDecoder
     }
 }
 

@@ -27,13 +27,14 @@ public enum DecoderGuard: String, Sendable, Hashable, CaseIterable {
     }
 
     /// The candidate's score under the guard: `imageIO` (its ImageIO score) unless it reaches `target`, the guard
-    /// applies to `chroma` and the libjpeg-turbo decode reads lower. `decode` wraps the second decode (slots, spans);
-    /// `score` scores it against the candidate's reference.
+    /// applies to `chroma`, a `viewer` decoder exists (`EnginePrimitives.viewerDecoder`) and its decode reads lower.
+    /// `decode` wraps the second decode (slots, spans); `score` scores it against the candidate's reference.
     func score(_ imageIO: Double, target: Double, chroma: ChromaSubsampling?, data: Data, width: Int, height: Int,
-               colorSpace: CGColorSpace, decode: (() throws -> PixelImage?) throws -> PixelImage?,
+               colorSpace: CGColorSpace, viewer: EnginePrimitives.ViewerJPEGDecode?,
+               decode: (() throws -> PixelImage?) throws -> PixelImage?,
                score: (PixelImage) throws -> Double) throws -> Double {
-        guard imageIO >= target, applies(to: chroma),
-              let second = try decode({ try IslowDecoder.decode(data, width: width, height: height, colorSpace: colorSpace) })
+        guard imageIO >= target, applies(to: chroma), let viewer,
+              let second = try decode({ try viewer(data, width, height, colorSpace) })
         else { return imageIO }
         return min(imageIO, try score(second))
     }

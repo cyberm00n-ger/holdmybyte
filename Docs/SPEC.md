@@ -990,14 +990,14 @@ Single-letter keys are active only while Compare is focused. They are declared o
 
 The engine proposal was empty. The decisions below come from the experiment files and today's re-measurements. Every number carries a tag (see the introduction): **[M]** measured, **[S]** simulated, **[B]** budget.
 
-**As built (updated 2026-10-16).** The engine lead's decisions D-ENG-1…12 (`Docs/DECISIONS.md`) amend this section.
+**As built (updated 2026-10-16).** The engine lead's decisions D-ENG-1…14 (`Docs/DECISIONS.md`) amend this section.
 The rows and subsections below state the engine as it now is; each amendment names its decision, and
 `Docs/ENGINE.md` holds the measurements. Original rationale is kept where it still explains the choice.
 
 | # | Decision | Evidence | Rejected alternative |
 |---|---|---|---|
-| E1 | **One JPEG encoder: jpegli, linked in-process via its native `jpegli_*` API.** No mozjpeg, no QuantRefiner, no encoder competition. *As built (D-ENG-11):* jpegli's own tables are reshaped per search (`JPEGTuning.fullSize`: chroma tables at d × 0.65, DC at d × 0.8, luma AC tilted up to × 4.95 at high frequencies, AQ on; `JPEGTuning.resized`: chroma at d × 0.7, **adaptive quantisation off**). Every output is still a standard progressive jpegli JPEG. | **[S]** On the 19-photo holdout at the old engine's per-photo reference-scale scores, jpegli 4:2:0 alone gives 49.28 MB vs. the old engine's 49.81 MB (−1.1 %) with a bracketing search (`search-analysis.txt`), and 49.47 MB (−0.7 %) / 49.86 MB (+0.1 %) with the proxy-guided search (`sim-A.txt`, `sim-B.json`). jpegli 4:4:4 won 0 of 19. | The old competition (moz420/moz444/jpegli420/jpegli444 + refiner): 2 libjpegs with clashing symbols, a subprocess helper, and 66 % of CPU spent on a rider. |
-| E2 | **4:4:4 only as fail-open**, when 4:2:0 cannot reach the target at d ≥ 0.5. The gate `chromaEnergy ≥ 2.42 → also search 4:4:4` exists behind a flag that is **off** by default and is switched on only if gate G3 (§6) fails. *As built (D-ENG-11):* holds for full size; DirectSearch JPEG at T ≥ 80 (Social at 85) searches **4:4:4 first** and no 4:2:0 (with `resized` tables 4:4:4 is 7–12 % smaller at T 85, and 4:2:0 cannot reach 90 at 1440 px). | jpegli444 won 7/533 on the old harvest. `chroma-0110.txt` **[M]**: on the most chroma-rich sample, 4:2:0 at d1.6 gives 74.80 @ 3.41 MB, while 4:4:4 needs about 3.85 MB for the same score. | Always searching both (2× the probes on about 25 % of photos for ~1 % of wins). |
+| E1 | **One JPEG encoder: jpegli, linked in-process via its native `jpegli_*` API.** No mozjpeg, no QuantRefiner, no encoder competition. *As built (D-ENG-11):* jpegli's own tables are reshaped per search (`JPEGTuning.fullSize`: chroma tables at d × 0.65, DC at d × 0.8, luma AC tilted up to × 4.95 at high frequencies, AQ on; `JPEGTuning.resized`: chroma at d × 0.7, **adaptive quantisation off**). Every output is still a standard progressive jpegli JPEG. *As built (D-ENG-13):* full-size JPEG at a fixed floor ≥ 85 (High, Highest; never Balanced) uses `JPEGTuning.highTarget` = `fullSize`'s shape with **adaptive quantisation off** (§3.4 high mode); Annex K tables and baseline coding exist as switches only. | **[S]** On the 19-photo holdout at the old engine's per-photo reference-scale scores, jpegli 4:2:0 alone gives 49.28 MB vs. the old engine's 49.81 MB (−1.1 %) with a bracketing search (`search-analysis.txt`), and 49.47 MB (−0.7 %) / 49.86 MB (+0.1 %) with the proxy-guided search (`sim-A.txt`, `sim-B.json`). jpegli 4:4:4 won 0 of 19. | The old competition (moz420/moz444/jpegli420/jpegli444 + refiner): 2 libjpegs with clashing symbols, a subprocess helper, and 66 % of CPU spent on a rider. |
+| E2 | **4:4:4 only as fail-open**, when 4:2:0 cannot reach the target at d ≥ 0.5. The gate `chromaEnergy ≥ 2.42 → also search 4:4:4` exists behind a flag that is **off** by default and is switched on only if gate G3 (§6) fails. *As built (D-ENG-11):* holds for full size; DirectSearch JPEG at T ≥ 80 (Social at 85) searches **4:4:4 first** and no 4:2:0 (with `resized` tables 4:4:4 is 7–12 % smaller at T 85, and 4:2:0 cannot reach 90 at 1440 px). *As built (D-ENG-13):* the full-size high mode searches 4:4:4 next to 4:2:0 from T 89 (mosaic-preselected) and delivers the smaller verified result. | jpegli444 won 7/533 on the old harvest. `chroma-0110.txt` **[M]**: on the most chroma-rich sample, 4:2:0 at d1.6 gives 74.80 @ 3.41 MB, while 4:4:4 needs about 3.85 MB for the same score. | Always searching both (2× the probes on about 25 % of photos for ~1 % of wins). |
 | E3 | **Delivered bytes are exactly the scored bytes.** Probes are encoded at the final setting: progressive level 2, adaptive quantisation on. There is no "probe at p0, re-encode at p2". *As built (D-ENG-11):* holds for every full-size output; full probes use a per-component progressive AC script chosen from the first mosaic encode (same coefficients). A DirectSearch JPEG may be delivered as a **lossless scan rewrite** of the scored file (kept only when ImageIO decodes both to identical pixels; the coefficients are identical, so every decoder agrees) or as a rewrite that zeroes isolated ±1 coefficients, which is **scored as delivered**. The mosaic proxy uses a 4-scan script with the same coefficients. | `jpegli-modes.txt` **[M]**: p2 is 2.4–3.1 % smaller than p0 at the same distance, but costs 0.76 s vs 0.37 s **[M today]**. CPU is not the bottleneck (§3.11), so the stronger guarantee is worth 0.4 CPU-s. | `photo-pipeline.sh`'s p0-probe/p2-final model: it relies on a pixel-identity assumption that nobody has tested. |
 | E4 | **Search = mosaic proxy + bias-corrected full-resolution probes**, mean about 2.0 and at most 3 full probes, with constants from `simulate.py` and `STOP = 0.5`. *As built (D-ENG-3):* the mosaic is encoded and scored *at the probe's own distance* (`.mosaicExact`, §3.4); holdout 1.84 full probes mean, max 3. | `proxy-analysis.txt` **[M]**: grid mosaic full−mosaic bias mean −1.49, sd 0.61, slope correlation 0.97 (the "hard" mosaic is worse: sd 1.32). `sim-B` **[S]**: 2.0 probes mean, 3 max, 0/19 unresolved, overshoot max 0.51. | The "hard" tile mosaic; half- or quarter-scale proxies (`scale-analysis.txt`: quarter-scale residual 4.5 points, so it is useless). |
 | E5 | **Metric = port of the old Metal SSIMULACRA2** (FIR Gaussian, cached reference session), *not* a new implementation. All floors (85, Balanced 74…87) are defined on this scale, the same scale as every DATENLAGE number. | Old port GPU vs CPU agreement ≤ 0.01. Holdout **[M]**: port scores read +0.53 above the libjxl reference binary on average at about 74 (`old-holdout-ownscores.txt` vs `-refscores.txt`). | A new IIR-exact kernel: it shifts every floor and invalidates all benchmark comparisons for v1. It is recorded as a v1.x task. |
@@ -1132,7 +1132,8 @@ script, for the mosaic), `encode(…, scans:)` and `chooseScans` (per-component 
 `TunableJPEGEncoding` takes a `JPEGTuning`; `live(webpTuning:)` builds `LibWebPEncoder` with `WebPTuning.default`
 (method 6, loop-filter strength 40, sharpness 7 on `WEBP_PRESET_PHOTO`); `PixelImage` ≥ 1 MB is an anonymous mapping
 and decoded candidates may wrap ImageIO's buffer; `IslowDecoder` decodes a JPEG to libjpeg-turbo's pixels (decoder
-guard). The fakes implement the defaults.
+guard), reached through `EnginePrimitives.viewerDecoder` (live: `IslowDecoder`; fakes and the memberwise default: nil,
+no guard). The fakes implement the defaults.
 
 ### 3.3 Per-photo pipeline (one decode, all deliveries)
 
@@ -1187,6 +1188,11 @@ keep-orig  : sourceIsJPEG && colour == .keepProfile && (no pass || best.bytes �
 guard      : (D-ENG-12, decoderGuard covers the result's chroma) the probes above are scored by ImageIO only; the
              result is decoded again like libjpeg-turbo and scored, s = min of the two; s < T → the next-smallest
              passing probe the same way; none → the whole search again with every passing probe guarded
+high mode  : (D-ENG-13) full-size JPEG at a fixed floor T ≥ 85 (not Balanced): the loop above with
+             JPEGTuning.highTarget (AQ off), prior 0.39·e^{0.164(90−T)} (4:2:0) / 0.50·e^{0.152(90−T)} (4:4:4),
+             bias prior −0.3, D_MIN 0.3; from T 89 also 4:4:4 unless the mosaic predicts > 3 % more bytes than the
+             passing 4:2:0 point (bias of that probe carried over); smallest passing probe of both; the tuned search
+             runs only if the high mode reaches nothing; the guard (above) applies to its result as to any other
 non-JPEG source and no pass → status .failed(.qualityUnreachable)   // practically unreachable; must be logged
 ```
 
@@ -1194,6 +1200,8 @@ Small images (no mosaic, i.e. under 2048×1024) use `DirectSearch` (§3.5) with 
 
 **[M] as built** (holdout, release, D-ENG-11): 48,365,625 bytes for 19 photos at 1.84 full probes mean, max 3, every
 photo ≥ target (G1 limit 50,301,670, D-ENG-1). Cost per aimed probe ≤ 6 mosaic evaluations (~0.03 s each on 2 MP).
+*[M] r2* (holdout, release, D-ENG-14): Couple unchanged; High 98,776,135 B (−3.39 %, 1.74 probes), Highest 182,463,652 B
+(−4.72 %, 2.74 probes); every file ≥ T under ImageIO and libjpeg-turbo.
 
 ### 3.5 Resized deliveries (`DirectSearch`)
 

@@ -203,7 +203,7 @@ struct PhotoPipeline {
                     guard guarded else { return score }
                     // The ImageIO candidate is gone before the libjpeg-turbo decode starts.
                     return try c.constants.decoderGuard.score(score, target: target, chroma: chroma, data: data, width: width,
-                                                              height: height, colorSpace: space, decode: guardDecode, score: guardScore)
+                                                              height: height, colorSpace: space, viewer: p.viewerDecoder, decode: guardDecode, score: guardScore)
                 }
                 func jpegProbe(_ tuning: JPEGTuning, guarded: Bool = true) -> (Double, ChromaSubsampling) throws -> ProbeRecord {
                     { d, chroma in
@@ -227,7 +227,7 @@ struct PhotoPipeline {
                     for record in result.probes.filter({ $0.passes(target) }).sorted(by: { $0.bytes < $1.bytes }) {
                         let score = try c.constants.decoderGuard.score(
                             record.score, target: target, chroma: record.subsampling, data: record.data, width: v.width,
-                            height: v.height, colorSpace: v.colorSpace, decode: guardDecode, score: guardScore)
+                            height: v.height, colorSpace: v.colorSpace, viewer: p.viewerDecoder, decode: guardDecode, score: guardScore)
                         guard score >= target else { continue }
                         if keepAllowed, Double(record.bytes) >= 0.95 * Double(sourceBytes) {
                             out.outcome = .keepOriginal

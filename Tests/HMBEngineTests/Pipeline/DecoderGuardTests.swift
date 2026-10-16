@@ -10,9 +10,11 @@ import Testing
 
     /// Runs the guard with a second reading of `second` and counts the second decodes.
     static func run(_ mode: DecoderGuard, imageIO: Double, second: Double?, chroma: ChromaSubsampling?,
-                    target: Double = 85) throws -> (score: Double, decodes: Int) {
+                    target: Double = 85, viewer: Bool = true) throws -> (score: Double, decodes: Int) {
         var decodes = 0
+        let none: EnginePrimitives.ViewerJPEGDecode = { @Sendable _, _, _, _ in nil }
         let score = try mode.score(imageIO, target: target, chroma: chroma, data: Data(), width: 8, height: 8, colorSpace: sRGB,
+                                   viewer: viewer ? none : nil,
                                    decode: { _ in
                                        decodes += 1
                                        return second == nil ? nil : PixelImage(width: 8, height: 8, colorSpace: sRGB)
@@ -36,6 +38,8 @@ import Testing
         #expect(try Self.run(.off, imageIO: 85.02, second: 84.9, chroma: .s444) == (85.02, 0))
         // A layout the second decoder declines keeps ImageIO's score.
         #expect(try Self.run(.chroma444, imageIO: 85.02, second: nil, chroma: .s444) == (85.02, 1))
+        // Primitives without a viewer decoder (the fakes): no guard, no second decode.
+        #expect(try Self.run(.all, imageIO: 85.02, second: 84.9, chroma: .s444, viewer: false) == (85.02, 0))
         // Exactly at the target counts as passing.
         #expect(try Self.run(.chroma444, imageIO: 85, second: 84.99, chroma: .s444) == (84.99, 1))
     }

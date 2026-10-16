@@ -111,6 +111,21 @@ v2 gates (`Benchmarks/baselines.json`). `Scripts/bench.sh holdout | wedding-coup
 set into `Benchmarks/runs/`; results, with the machine state of every timing, are in
 [`Docs/BENCHMARKS.md`](Docs/BENCHMARKS.md). Timing gates are only reported on a quiet machine (1-minute load < 3).
 
+Current engine on the 19-photo holdout (400.3 MB of 45 MP Lightroom JPEGs), every delivered file at or above its
+quality floor on the engine's metric, JPEGs also when decoded like libjpeg-turbo (browsers):
+
+| Delivery | Floor | Output |
+|---|---|---|
+| Couple (full size, 4:2:0) | 74 (Balanced) | 48.4 MB |
+| Website (2560 px WebP) | 70 | 5.6 MB |
+| Social (1440 px JPEG) | 85 | 5.3 MB |
+| High (full size) | 85 | 98.8 MB |
+| Highest (full size) | 90 | 182.5 MB |
+| Archive (lossless JPEG XL, byte-exact) | — | 312.4 MB |
+
+Timings depend on machine load and are recorded per run in `Docs/BENCHMARKS.md`; no speed comparison with other
+tools is claimed.
+
 ## Licence
 
 _To be decided._ Vendored codecs: libjxl (BSD-3-Clause), libwebp (BSD-3-Clause), Highway (Apache-2.0 / BSD-3-Clause),

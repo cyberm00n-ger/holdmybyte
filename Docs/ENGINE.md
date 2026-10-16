@@ -5,7 +5,8 @@ documents how WP2 implemented it, the constants in use and what was validated. S
 (2026-10-15, branch `int-engine`) it also records the live fits and the search change of Docs/DECISIONS.md D-ENG-3…5.
 Since the engine integration of 2026-10-16 (branch `eng-v3`, D-ENG-11) it also records the speed changes, the tuned
 JPEG tables and the post-pass (§3.5, §8, §10). Since D-ENG-13 (branch `eng-highest`) full-size JPEG at fixed floors
-≥ 85 runs in a high-target mode (§3.2).
+≥ 85 runs in a high-target mode (§3.2). Since D-ENG-12 every delivered JPEG is also scored on libjpeg-turbo's
+pixels and the lower score counts (decoder guard, §3.6); `eng-r2` (D-ENG-14) integrates both (§11).
 
 Code: `Sources/HMBEngine/{Search,Pipeline,Jobs,IO,Metadata,Estimate,Service}`.
 Tests: `Tests/HMBEngineTests/Pipeline` (fakes; live tests gated on `EnginePrimitives.live()` plus `HMB_HOLDOUT` /
@@ -34,6 +35,7 @@ Tests: `Tests/HMBEngineTests/Pipeline` (fakes; live tests gated on `EnginePrimit
 | Codec arenas (libjxl, jpegli working memory) | `CHMBCodecs/arena.cc` | §3.9 |
 | `Estimator`, `LearnedEstimates`, `DeliveryKind` | `Estimate/Estimator.swift` | §3.10 |
 | `JPEGTuning` (table shape per search), `JPEGKnobs`, `TunableJPEGEncoding` | `Search/SearchModel.swift`, `Codecs/JpegliEncoder.swift` | §3.4/§3.5, D-ENG-11 |
+| `DecoderGuard`, `IslowDecoder` (`hmb_jpeg_decode_islow`: libjpeg-turbo's pixels from jpegli's coefficients) | `Pipeline/DecoderGuard.swift`, `Codecs/IslowDecoder.swift`, `CHMBCodecs/jpegli.cc` | E6, D-ENG-12 |
 | High-target mode (`MosaicSearch.searchHigh`, `SearchConstants.highMode`, `Targets.highPrior`) | `Search/MosaicSearch.swift`, `Search/SearchModel.swift` | §3.4, D-ENG-13 |
 | `JPEGPostPass` (scan script, lossless rewrite, ±1 zeroing), `WebPTuning` | `Codecs/JPEGPostPass.swift`, `Codecs/LibWebPEncoder.swift` | §3.5, D-ENG-11 |
 | `XMPMinify`, `XMPLayout` | `Metadata/XMPMinify.swift` | §3.7, D-ENG-11 |
@@ -147,7 +149,8 @@ encodes. Holdout (release, back to back with main 66e3db0): Highest 191,497,771 
 libjpeg-turbo minimum 89.82 / 84.85 (main 89.81 / 84.88). Annex K tables (`HMB_HIGH_TABLES=annexk`, +3.7 %) and
 baseline coding (`HMB_HIGH_SCAN=baseline`, −8.6 % on ImageIO but every file 89.2–89.8 under libjpeg-turbo) are
 switches, not defaults (D-ENG-13). `HMB_HIGH=off` reproduces main byte for byte; `HMB_HIGH_BAND=<from>,<first>` sets the
-band.
+band. The high mode's results go through the decoder guard like every full-size result (§3.6): at these targets
+jpegli 4:2:0 without AQ is not always read higher by libjpeg-turbo (holdout gap down to −0.075), see §11.
 
 #### `.proxyCurve` (the §3.4 loop)
 
@@ -298,6 +301,30 @@ Details and the rejected settings: `Docs/variants/search.md`.
 5,555,974 (−11.33 %), Social 6,015,880 → 5,319,707 (−11.57 %), Archive identical. With every switch off the build
 reproduces d42cb2d byte for byte, with only the post-pass on it reproduces `eng-postpass`, with only the tuning on
 `eng-search` (19/19 SHA-256 each, `Docs/variants/eng-v3.md`).
+
+### 3.6 Decoder guard (D-ENG-12, branch `eng-safety`; integrated in `eng-r2`, D-ENG-14)
+
+ImageIO stays the scoring decoder (D-ENG-2). Browsers decode JPEG with libjpeg-turbo, whose pixels differ from
+ImageIO's by up to ±0.5 points on the same file. `IslowDecoder` reproduces libjpeg-turbo's default decompressor
+(ISLOW IDCT, fancy upsampling with context rows, `jdcolor.c` fixed-point colour) from jpegli's coefficients, in process,
+pixel-identical to `djpeg` 3.2 (`IslowDecodeTests`); layouts other than 8-bit YCbCr 4:4:4 / 4:2:0 return nil and keep
+the ImageIO score.
+
+```
+guarded(c) = ImageIO(c) < T or chroma not covered → ImageIO(c)
+             else min(ImageIO(c), score(IslowDecoder(c), same reference))
+DirectSearch (resized): every passing JPEG probe and post-pass rewrite is guarded (≈ 0.02 s per 1440 px decode)
+MosaicSearch (full size): probes scored by ImageIO; the result r is guarded (≈ 0.4 s per 45 MP decode + one score);
+             guarded(r) < T → the next-smallest passing probe the same way; none → the whole search again
+             (tuned and high mode) with every passing probe guarded; mosaic points stay cached
+modes      : .all (default) every JPEG; .chroma444 4:4:4 only; .off = eng-v3 (`HMB_DECODER_GUARD`)
+```
+
+The viewer decoder comes from the primitives (`EnginePrimitives.viewerDecoder`: `IslowDecoder` in `live()`, nil in
+`fakes()`, whose "JPEGs" are not JPEGs, so fake-based tests run unguarded). The second decode takes the decode slot of
+the first, after the ImageIO candidate is released. WebP is not guarded:
+ImageIO's WebP pixels are libwebp's (19/19 identical). Audit tool: `DecoderAuditTests` (opt-in, `HMB_DECODER_AUDIT*`,
+Couple / Website / Social / High / Highest folders, `HMB_DECODER_AUDIT_FAST=1` = in-process libjpeg-turbo only).
 
 ## 4. Writing, journal and resume (§3.8)
 
@@ -510,3 +537,14 @@ is contained in `JPEGTuning.fullSize`'s chroma 0.65). `eng-research` changed no 
 tuned and in the proxy script; the scan choice is read from the tuned proxy mosaic's coefficients.
 `ScanScriptEquivalenceTests.tunedTablesDecodeToTheSamePixelsInEveryScript` checks that all three scripts decode to the
 same pixels with both tunings. Measurements: `Docs/variants/eng-v3.md`, `Docs/BENCHMARKS.md`.
+
+## 11. Engine integration `eng-r2` (2026-10-16, D-ENG-14)
+
+`eng-safety` (decoder guard, `IslowDecoder`, reproducible codec lock 6e8cf4a9) and `eng-highest` (high-target mode)
+merged in that order. The high mode's oracle runs inside the full-size search that the guard wraps, so the guard covers
+high-mode results at 4:2:0 and 4:4:4. Holdout, release, all six deliveries in one job, back to back with main
+(`Docs/BENCHMARKS.md`): Couple, Website, Archive byte-identical; Social −315 B (7 files moved by the guard); High
+−3.39 %; Highest −4.72 % (182,463,652 B: the guard moved one high-mode 4:2:0 file that libjpeg-turbo read at 89.998 to
+4:4:4, +125,711 B against `.chroma444`). Every delivered JPEG ≥ target under ImageIO and libjpeg-turbo. CPU +13 %,
+wall +22 % on the six-delivery job (load 5–8); about 28 s CPU of the +34 s are the 57 full-size guard decodes
+(`.chroma444` run: 259.7 s).
