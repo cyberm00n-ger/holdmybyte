@@ -116,23 +116,48 @@ int hmb_webp_prepare(const uint8_t *rgba, uint32_t width, uint32_t height, size_
     return 0;
 }
 
+namespace {
+int encode_with(const hmb_webp_prepared *p, const WebPConfig &config, hmb_bytes icc, hmb_bytes exif, hmb_bytes xmp,
+                hmb_buffer *out, char *err, size_t err_len);
+}  // namespace
+
 int hmb_webp_encode(const hmb_webp_prepared *p, float quality, int method,
                     hmb_bytes icc, hmb_bytes exif, hmb_bytes xmp, hmb_buffer *out, char *err, size_t err_len) {
+    hmb_webp_tuning tuning = {method, -1, -1, -1, -1, -1, -1, -1, -1};
+    return hmb_webp_encode_tuned(p, quality, tuning, icc, exif, xmp, out, err, err_len);
+}
+
+int hmb_webp_encode_tuned(const hmb_webp_prepared *p, float quality, hmb_webp_tuning tuning,
+                          hmb_bytes icc, hmb_bytes exif, hmb_bytes xmp, hmb_buffer *out, char *err, size_t err_len) {
     if (out == nullptr) return fail(err, err_len, "hmb_webp_encode: out is NULL");
     out->data = nullptr;
     out->size = 0;
     if (p == nullptr) return fail(err, err_len, "hmb_webp_encode: prepared picture is NULL");
     if (!(quality >= 0.0f && quality <= 100.0f))
         return fail(err, err_len, "hmb_webp_encode: quality %g outside 0...100", static_cast<double>(quality));
-    if (method < 0 || method > 6) return fail(err, err_len, "hmb_webp_encode: method %d outside 0...6", method);
+    if (tuning.method < 0 || tuning.method > 6) return fail(err, err_len, "hmb_webp_encode: method %d outside 0...6", tuning.method);
 
     WebPConfig config;
     if (!WebPConfigPreset(&config, WEBP_PRESET_PHOTO, quality))
         return fail(err, err_len, "hmb_webp_encode: libwebp version mismatch");
-    config.method = method;
+    config.method = tuning.method;
     config.use_sharp_yuv = 1;
     config.thread_level = 0;
+    if (tuning.sns_strength >= 0) config.sns_strength = tuning.sns_strength;
+    if (tuning.filter_strength >= 0) config.filter_strength = tuning.filter_strength;
+    if (tuning.filter_sharpness >= 0) config.filter_sharpness = tuning.filter_sharpness;
+    if (tuning.filter_type >= 0) config.filter_type = tuning.filter_type;
+    if (tuning.autofilter >= 0) config.autofilter = tuning.autofilter;
+    if (tuning.segments >= 0) config.segments = tuning.segments;
+    if (tuning.partition_limit >= 0) config.partition_limit = tuning.partition_limit;
+    if (tuning.pass >= 0) config.pass = tuning.pass;
     if (!WebPValidateConfig(&config)) return fail(err, err_len, "hmb_webp_encode: invalid configuration");
+    return encode_with(p, config, icc, exif, xmp, out, err, err_len);
+}
+
+namespace {
+int encode_with(const hmb_webp_prepared *p, const WebPConfig &config, hmb_bytes icc, hmb_bytes exif, hmb_bytes xmp,
+                hmb_buffer *out, char *err, size_t err_len) {
 
     WebPPicture picture;
     if (!WebPPictureInit(&picture)) return fail(err, err_len, "hmb_webp_encode: libwebp version mismatch");
@@ -199,6 +224,7 @@ int hmb_webp_encode(const hmb_webp_prepared *p, float quality, int method,
     WebPMemoryWriterClear(&writer);
     return result;
 }
+}  // namespace
 
 void hmb_webp_release(hmb_webp_prepared *p) {
     if (p == nullptr) return;

@@ -60,6 +60,16 @@ public struct SearchConstants: Sendable, Hashable {
     /// is 7–12 % smaller than 4:2:0 at T 85 (1024/1440 px) and 4:2:0 cannot reach 90 at 1440 px, while 4:2:0 wins
     /// at T 70–74. `.infinity`: the §3.5 order (4:2:0, d = dMin, then 4:4:4).
     public var direct444From = 80.0
+    /// Variant "postpass" (Docs/variants/postpass.md): full-size JPEG probes are encoded with the per-component
+    /// progressive AC script estimated from the first mosaic encode of their subsampling, and JPEGs found by
+    /// DirectSearch get the lossless scan post-pass. Neither changes a coefficient, so scores are unaffected.
+    public var optimizeScans = true
+    /// Variant "postpass": layout whitespace in XMP packets (see `XMPMinify`).
+    public var xmpLayout: XMPLayout = .minifiedUnlessKeepAll
+    /// Variant "postpass": JPEGs found by DirectSearch (Social, small full-size, WebP fallback) try up to this many
+    /// rewrites that zero isolated ±1 AC coefficients (bisection over the zigzag start), each re-scored; the
+    /// smallest that still reaches the target is delivered. 0 = off.
+    public var zeroingAttempts = 4
     public init() {}
     public static let spec = SearchConstants()
 }

@@ -1,5 +1,6 @@
-// `JPEGEncoding` via the in-process jpegli encoder (`hmb_jpegli_encode`): progressive level 2, adaptive
-// quantisation on, optimised Huffman tables; the output carries exactly the given APPn/COM markers, in order.
+// `JPEGEncoding` via the in-process jpegli encoder (`hmb_jpegli_encode`): progressive level 2 (or an explicit
+// per-component AC script, variant "postpass"), adaptive quantisation on, optimised Huffman tables; the output
+// carries exactly the given APPn/COM markers, in order.
 import CHMBCodecs
 import Foundation
 import HMBModel
@@ -26,9 +27,19 @@ public struct JpegliEncoder: TunableJPEGEncoding {
         return try encode(image, knobs: knobs, markers: [])
     }
 
+    /// The same coefficients as `encode` with an explicit per-component progressive AC script (variant "postpass").
+    public func encode(_ image: PixelImage, distance: Double, subsampling: ChromaSubsampling,
+                       markers: [JPEGMarker], scans: JPEGScanChoice?) throws -> Data {
+        var knobs = JPEGKnobs(distance: distance, sampling: subsampling == .s444 ? .s444 : .s420)
+        knobs.scans = scans
+        return try encode(image, knobs: knobs, markers: markers)
+    }
+
+    public func chooseScans(_ encoded: Data) throws -> JPEGScanChoice? { try JPEGPostPass.chooseScans(encoded) }
+
     /// The extended encoder (`hmb_jpegli_encode_opts`): separate chroma distance, 4:2:2, adaptive quantisation off,
-    /// the proxy scan script for scoring-only candidates. `JPEGKnobs(distance:sampling:)` with the defaults is
-    /// byte-identical to `encode(_:distance:subsampling:markers:)`.
+    /// the proxy scan script for scoring-only candidates, an explicit scan script. `JPEGKnobs(distance:sampling:)`
+    /// with the defaults is byte-identical to `encode(_:distance:subsampling:markers:)`.
     public func encode(_ image: PixelImage, knobs: JPEGKnobs, markers: [JPEGMarker]) throws -> Data {
         let distance = knobs.distance
         guard distance.isFinite, (0...25).contains(distance) else { throw PrimitiveError("jpegli: invalid distance \(distance)") }
@@ -38,7 +49,7 @@ public struct JpegliEncoder: TunableJPEGEncoding {
                                          sampling: knobs.sampling.code, adaptive_quantization: knobs.adaptiveQuantization ? 1 : 0,
                                          progressive_level: knobs.scoringOnly && progressiveLevel == 2 ? HMB_JPEGLI_SCAN_PROXY : progressiveLevel,
                                          luma_tilt: Float(knobs.lumaTilt),
-                                         chroma_tilt: Float(knobs.chromaTilt), dc_ratio: Float(knobs.dcRatio))
+                                         chroma_tilt: Float(knobs.chromaTilt), dc_ratio: Float(knobs.dcRatio), scan_choice: nil)
         // All payloads in one contiguous array, so a single pointer stays valid for the whole C call.
         var storage = [UInt8]()
         storage.reserveCapacity(markers.reduce(0) { $0 + $1.payload.count })
@@ -53,9 +64,13 @@ public struct JpegliEncoder: TunableJPEGEncoding {
                            payload: hmb_bytes(data: range.count > 0 ? all.baseAddress! + range.offset : nil, size: range.count))
             }
             return try cMarkers.withUnsafeBufferPointer { cMarkers in
-                try CodecBridge.call("jpegli encode") { out, err, errLen in
-                    hmb_jpegli_encode_opts(image.bytes, UInt32(image.width), UInt32(image.height), image.bytesPerRow,
-                                           &options, cMarkers.baseAddress, cMarkers.count, out, err, errLen)
+                let choice: [Int32] = knobs.scans.map { [Int32($0.y), Int32($0.cb), Int32($0.cr)] } ?? []
+                return try choice.withUnsafeBufferPointer { choice in
+                    options.scan_choice = choice.isEmpty ? nil : choice.baseAddress
+                    return try CodecBridge.call("jpegli encode") { out, err, errLen in
+                        hmb_jpegli_encode_opts(image.bytes, UInt32(image.width), UInt32(image.height), image.bytesPerRow,
+                                               &options, cMarkers.baseAddress, cMarkers.count, out, err, errLen)
+                    }
                 }
             }
         }
@@ -82,6 +97,8 @@ public struct JPEGKnobs: Sendable, Hashable {
     /// A candidate that is only scored, never delivered: level 2's coefficients in the minimal scan script
     /// (`HMB_JPEGLI_SCAN_PROXY`). Changes bytes, never the decoded pixels.
     public var scoringOnly = false
+    /// Per-component progressive AC script (variant "postpass"); nil = level 2's. Changes bytes, never the pixels.
+    public var scans: JPEGScanChoice?
 
     public init(distance: Double, chromaDistance: Double? = nil, sampling: Sampling = .s420, adaptiveQuantization: Bool = true) {
         self.distance = distance
@@ -99,12 +116,15 @@ public protocol TunableJPEGEncoding: JPEGEncoding {
 extension JPEGEncoding {
     /// Encodes with the search's table tuning (Docs/ENGINE.md §3.5). The identity tuning, and any encoder that takes no
     /// knobs (the fakes), use the frozen call, so their bytes are unchanged.
+    /// `scans`: the post-pass's per-component AC script (nil: level 2's); encoders without script control ignore it.
     public func encode(_ image: PixelImage, distance: Double, subsampling: ChromaSubsampling, tuning: JPEGTuning,
-                       markers: [JPEGMarker]) throws -> Data {
+                       markers: [JPEGMarker], scans: JPEGScanChoice? = nil) throws -> Data {
         if !tuning.isIdentity, let tunable = self as? any TunableJPEGEncoding {
-            return try tunable.encode(image, knobs: tuning.knobs(distance: distance, subsampling: subsampling), markers: markers)
+            var knobs = tuning.knobs(distance: distance, subsampling: subsampling)
+            knobs.scans = scans
+            return try tunable.encode(image, knobs: knobs, markers: markers)
         }
-        return try encode(image, distance: distance, subsampling: subsampling, markers: markers)
+        return try encode(image, distance: distance, subsampling: subsampling, markers: markers, scans: scans)
     }
 
     /// `encodeForScoring` with the search's table tuning: the tuned coefficients in the proxy scan script.

@@ -165,7 +165,8 @@ struct PhotoPipeline {
         guard let target = Targets.target(preset.quality, features: features) else {
             return failed(photo, plan, .encodeFailed, seconds: lap())
         }
-        let meta = MetadataEditor.output(for: info, policy: preset.metadata, colour: preset.colour)
+        let meta = MetadataEditor.output(for: info, policy: preset.metadata, colour: preset.colour,
+                                         xmpLayout: c.constants.xmpLayout)
         let markers = MetadataEditor.jpegMarkers(meta)
         let keepAllowed = preset.isFullSize && info.kind == .jpeg && preset.colour == .keepProfile
         let sourceBytes = info.fileBytes.count
@@ -173,6 +174,9 @@ struct PhotoPipeline {
 
         let search: SearchResult
         var encoderName = preset.format == .webp ? "libwebp" : "jpegli"
+        // Variant "postpass": the AC scan script per subsampling, chosen from the first mosaic encode of that
+        // subsampling (MosaicSearch always scores mosaic seeds before its first full probe).
+        let scanChoices = Locked([ChromaSubsampling: JPEGScanChoice]())
         do {
             search = try Spans.measure("search+slotwait") { try c.lane.withReference(v, cancel: c.cancel) { ref -> SearchResult in
                 func verify(_ data: Data) throws -> Double {
@@ -188,7 +192,8 @@ struct PhotoPipeline {
                     { d, chroma in
                         try c.cancel.check()
                         let data = try Spans.measure("probe.encode") {
-                            try p.jpeg.encode(v, distance: d, subsampling: chroma, tuning: tuning, markers: markers)
+                            try p.jpeg.encode(v, distance: d, subsampling: chroma, tuning: tuning, markers: markers,
+                                              scans: scanChoices.snapshot[chroma])
                         }
                         return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
                     }
@@ -202,6 +207,11 @@ struct PhotoPipeline {
                                     let data = try Spans.measure("mosaic.encode") {
                                         try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: chroma, tuning: c.constants.jpegTuning)
                                     }
+                                    // The scan script is chosen from the coefficients, whatever script the mosaic used.
+                                    if c.constants.optimizeScans, scanChoices.snapshot[chroma] == nil,
+                                       let choice = try Spans.measure("mosaic.chooseScans", { try p.jpeg.chooseScans(data) }) {
+                                        scanChoices.withLock { $0[chroma] = choice }
+                                    }
                                     let decoded = try Spans.measure("mosaic.decode") { try p.decoder.decode(encoded: data) }
                                     return try Spans.measure("mosaic.score+wait") { try c.lane.score(decoded, against: mosaicRef, cancel: c.cancel) }
                                 },
@@ -211,8 +221,42 @@ struct PhotoPipeline {
                                                            constants: c.constants)
                         }
                     }
-                    return try DirectSearch.jpeg(target: target, constants: c.constants, keepOriginalAllowed: keepAllowed,
-                                                 sourceBytes: sourceBytes, probe: jpegProbe(c.constants.directJPEGTuning))
+                    return try directPostPass(DirectSearch.jpeg(target: target, constants: c.constants,
+                                                                keepOriginalAllowed: keepAllowed, sourceBytes: sourceBytes,
+                                                                probe: jpegProbe(c.constants.directJPEGTuning)))
+                }
+                // Variant "postpass" for JPEGs found by DirectSearch (no mosaic to choose a script from): the lossless
+                // scan rewrite (kept only if ImageIO decodes it to the scored pixels), then up to `zeroingAttempts`
+                // rewrites zeroing isolated ±1 coefficients, each scored; the smallest passing candidate is delivered.
+                func directPostPass(_ result: SearchResult) throws -> SearchResult {
+                    guard c.constants.optimizeScans, case .encoded(let best) = result.outcome, best.subsampling != nil else { return result }
+                    var out = result
+                    var chosen = best
+                    if let smaller = try JPEGPostPass.optimizeScans(best.data) {
+                        let same = try c.lane.decoding(pixels: v.pixelCount, cancel: c.cancel) {
+                            try ImageCompare.identical(p.decoder.decode(encoded: best.data), p.decoder.decode(encoded: smaller))
+                        }
+                        if same { chosen.data = smaller } else { Self.log.error("scan post-pass changed decoded pixels; keeping the scored bytes") }
+                    }
+                    var lo = 4, hi = 64                     // zigzag start K: hi = nothing zeroed (passes), lo = strongest
+                    var attempts = 0
+                    while attempts < c.constants.zeroingAttempts, hi - lo > 1, best.score > target {
+                        try c.cancel.check()
+                        let k = (lo + hi) / 2
+                        guard let data = try JPEGPostPass.rewrite(best.data, minK: k, minRun: 2, componentMask: 7,
+                                                                  optimizeScans: true) else { break }   // not a jpegli JPEG
+                        let record = ProbeRecord(parameter: best.parameter, subsampling: best.subsampling, score: try verify(data), data: data)
+                        out.probes.append(record)
+                        attempts += 1
+                        if record.passes(target) {
+                            hi = k
+                            if record.bytes < chosen.bytes { chosen = record }
+                        } else {
+                            lo = k
+                        }
+                    }
+                    out.outcome = .encoded(chosen)
+                    return out
                 }
                 switch preset.format {
                 case .webp:
@@ -250,7 +294,7 @@ struct PhotoPipeline {
             }
         case .keepOriginal:
             let data: Data
-            do { data = try MetadataEditor.keptOriginal(info, policy: preset.metadata) } catch {
+            do { data = try MetadataEditor.keptOriginal(info, policy: preset.metadata, xmpLayout: c.constants.xmpLayout) } catch {
                 Self.log.error("lossless metadata rewrite failed for \(photo.relativePath, privacy: .public): \(String(describing: error), privacy: .public)")
                 return failed(photo, plan, .encodeFailed, target: target, seconds: lap())
             }
