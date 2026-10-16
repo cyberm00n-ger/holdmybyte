@@ -32,8 +32,8 @@ claims; numbers we measured are marked **[M]**, with the machine state in `varia
   optimise/resize/export and multi-size export into sub-folders, i.e. "deliveries". Price: $59 one-time (Pro),
   $89 with Lightroom/Photoshop/Capture One plugins, $99 with automations, $129 bundle; one year of updates.
 - **Our moat is the measured floor, not the percentage**: on the 535-photo wedding JPEGmini's own output ranges from
-  score 75.0 to 93.5 (median 89.9) while claiming "visually
-  identical"; our High delivery (old engine) holds ≥ 85.0 on every file and is 43 % smaller. No competitor surveyed publishes a per-photo quality number at all.
+  score 75.0 to 93.5 (median 89.9) while claiming "visually identical"; our High delivery (old engine) holds
+  ≥ 85.0 on every file and is 43 % smaller. No competitor surveyed publishes a per-photo quality number at all.
 
 ## 2. JPEGmini (Beamr)
 
