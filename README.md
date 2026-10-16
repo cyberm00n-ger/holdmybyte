@@ -41,7 +41,10 @@ swift test
 as static libraries, merges them into `Vendor/xcframeworks/HMBCodecs.xcframework` and copies the headers listed in
 `Scripts/codec-headers.txt` into `Sources/CHMBCodecs/vendor-include/`. Both outputs are git-ignored. The script
 audits the archive (no exported `jpeg_*` symbols, no Homebrew paths) and is a no-op when the output already matches
-`OUTPUT_SHA256` in the lock. In a git worktree, clone the main checkout's build instead of rebuilding:
+`OUTPUT_SHA256` in the lock. The archive is reproducible (ar headers normalised to date 0, uid/gid 0, mode 100644), so
+a build that does not match the lock is an error and installs nothing; `Scripts/build-codecs.sh --update-lock` is the
+only way to re-pin (after changing a pin, a patch or the toolchain). The build path must not contain spaces. In a git
+worktree, clone the main checkout's build instead of rebuilding:
 
 ```bash
 Scripts/link-codecs.sh ~/Desktop/holdmybyte

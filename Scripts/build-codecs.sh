@@ -3,8 +3,23 @@
 # Vendor/xcframeworks/HMBCodecs.xcframework (one static library, no headers) and copies the
 # headers listed in Scripts/codec-headers.txt into Sources/CHMBCodecs/vendor-include/.
 # Idempotent: exits immediately when the existing output matches OUTPUT_SHA256 in the lock.
-# See Docs/SPEC.md §3.13.
+# The merged archive is reproducible: ZERO_AR_DATE plus uid/gid 0 and mode 100644 in every ar member header
+# (libtool copies the build user's uid, the build directory's group and the umask into them), so a checkout in any
+# directory, by any user, builds the same bytes. A build whose SHA-256 differs from the lock FAILS and installs
+# nothing; `--update-lock` (a new pin, a patch, a toolchain change) installs it and rewrites the lock.
+# See Docs/SPEC.md §3.13 and Docs/DECISIONS.md D-ENG-12.
+#
+# Usage: Scripts/build-codecs.sh [--update-lock]
 set -euo pipefail
+
+UPDATE_LOCK=0
+for arg in "$@"; do
+    case "$arg" in
+        --update-lock) UPDATE_LOCK=1 ;;
+        -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+        *) echo "build-codecs: error: unknown argument $arg (usage: Scripts/build-codecs.sh [--update-lock])" >&2; exit 64 ;;
+    esac
+done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="${HMB_CODEC_WORK:-$ROOT/.codec-build}"
@@ -27,7 +42,10 @@ if [ -n "${OUTPUT_SHA256:-}" ] && [ "$(current_sha)" = "$OUTPUT_SHA256" ] \
     exit 0
 fi
 
-for tool in git cmake ninja libtool xcodebuild nm otool shasum; do
+# The work path goes into CMAKE_<LANG>_FLAGS (-ffile-prefix-map), which CMake splits at spaces.
+case "$WORK" in *[[:space:]]*) die "the build directory '$WORK' contains a space; set HMB_CODEC_WORK to a path without spaces" ;; esac
+
+for tool in git cmake ninja libtool xcodebuild nm otool shasum perl; do
     command -v "$tool" >/dev/null 2>&1 || die "missing tool: $tool"
 done
 
@@ -114,6 +132,35 @@ log "merging ${#LIBS[@]} archives"
 rm -f "$WORK/libhmbcodecs.a"
 libtool -static -no_warning_for_no_symbols -o "$WORK/libhmbcodecs.a" "${LIBS[@]}"
 
+# libtool writes the build user's uid, the group of the build directory (BSD: new files take their directory's
+# group, so /tmp gives wheel, a home folder staff) and the umask's mode into every member header. Normalise them
+# (date 0 as with ZERO_AR_DATE, uid 0, gid 0, mode 100644). Names and sizes are untouched, so the symbol table's
+# offsets stay valid.
+normalize_archive() { # archive
+    perl -e '
+        use strict; use warnings;
+        my $file = shift;
+        open(my $fh, "+<:raw", $file) or die "cannot open $file: $!\n";
+        my $data = do { local $/; <$fh> };
+        substr($data, 0, 8) eq "!<arch>\n" or die "$file: not an ar archive\n";
+        my ($offset, $members) = (8, 0);
+        while ($offset < length($data)) {
+            length($data) >= $offset + 60 or die "$file: truncated member header at $offset\n";
+            substr($data, $offset + 58, 2) eq "`\n" or die "$file: bad member header at $offset\n";
+            (my $size = substr($data, $offset + 48, 10)) =~ s/ +$//;
+            $size =~ /^\d+$/ or die "$file: bad member size at $offset\n";
+            substr($data, $offset + 16, 32) = sprintf("%-12s%-6s%-6s%-8s", "0", "0", "0", "100644");
+            $offset += 60 + $size;
+            $offset += 1 if $offset % 2;
+            $members++;
+        }
+        $offset == length($data) or die "$file: trailing bytes\n";
+        seek($fh, 0, 0) or die; print $fh $data or die; close($fh) or die;
+        print STDERR "build-codecs: normalised $members ar member headers\n";
+    ' "$1"
+}
+normalize_archive "$WORK/libhmbcodecs.a"
+
 log "auditing"
 # (symbol table captured to a file: `nm | grep -q` would SIGPIPE nm under pipefail)
 SYMS="$WORK/libhmbcodecs.syms"
@@ -125,6 +172,13 @@ for sym in jpegli_CreateCompress jpegli_set_distance JxlEncoderCreate JxlDecoder
 done
 if otool -l "$WORK/libhmbcodecs.a" 2>/dev/null | grep -E '/opt/homebrew|/usr/local'; then die "Homebrew path in a load command"; fi
 if strings -a "$WORK/libhmbcodecs.a" | grep -E '/opt/homebrew|/usr/local'; then die "Homebrew path in the string table"; fi
+
+BUILT_SHA="$(shasum -a 256 "$WORK/libhmbcodecs.a" | cut -d' ' -f1)"
+if [ "$BUILT_SHA" != "${OUTPUT_SHA256:-}" ] && [ "$UPDATE_LOCK" != "1" ]; then
+    die "the build's SHA-256 $BUILT_SHA differs from Vendor/codecs.lock (${OUTPUT_SHA256:-unset}); nothing was installed.
+  Same pins and patches should give the locked bytes on any machine with the same toolchain: check Xcode/CMake
+  versions and Vendor/patches. If the change is intended, rerun with --update-lock and commit Vendor/codecs.lock."
+fi
 
 log "creating xcframework"
 mkdir -p "$ROOT/Vendor/xcframeworks"
@@ -150,16 +204,15 @@ copy_headers() { # dest
 log "copying headers"
 copy_headers "$INCLUDE_OUT"
 
-write_lock_sha() {
+finish() {
     local sha; sha="$(current_sha)"
-    if [ "$sha" != "${OUTPUT_SHA256:-}" ]; then
+    [ "$sha" = "$BUILT_SHA" ] || die "installed archive $sha is not the built one ($BUILT_SHA)"
+    if [ "$sha" != "${OUTPUT_SHA256:-}" ]; then           # only reachable with --update-lock
         local tmp="$LOCK.tmp"
         sed -e "s/^OUTPUT_SHA256=.*/OUTPUT_SHA256=\"$sha\"/" "$LOCK" > "$tmp"
         mv "$tmp" "$LOCK"
-        if [ -n "${OUTPUT_SHA256:-}" ]; then
-            log "note: output differs from the lock (toolchain change?); lock updated to $sha"
-        fi
+        log "lock updated: ${OUTPUT_SHA256:-unset} -> $sha (commit Vendor/codecs.lock)"
     fi
     log "done: $LIB_IN_XCF ($sha)"
 }
-write_lock_sha
+finish

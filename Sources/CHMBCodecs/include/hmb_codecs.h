@@ -59,6 +59,12 @@ int  hmb_jpeg_rewrite(const uint8_t *jpeg, size_t size, hmb_jpeg_rewrite_options
 int  hmb_jpegli_encode_scans(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
                              float distance, int subsampling_444, int progressive_level, const int *scan_choice,
                              const hmb_marker *markers, size_t marker_count, hmb_buffer *out, char *err, size_t err_len);
+// Decoder guard (D-ENG-12, added after eng-v3): decodes a JPEG into `rgbx` (width × height, `stride` bytes per row,
+// X = 255) to the pixels libjpeg-turbo's default decompressor gives (ISLOW IDCT, fancy upsampling, jdcolor.c tables;
+// djpeg, Chrome, Firefox, Edge). jpegli reads the coefficients. Returns 1 (nothing written) for layouts other than
+// 8-bit 3-component YCbCr 4:4:4 or 4:2:0.
+int  hmb_jpeg_decode_islow(const uint8_t *jpeg, size_t size, uint8_t *rgbx, uint32_t width, uint32_t height,
+                           size_t stride, char *err, size_t err_len);
 typedef struct hmb_webp_prepared hmb_webp_prepared;
 int  hmb_webp_prepare(const uint8_t *rgba, uint32_t width, uint32_t height, size_t stride,
                       hmb_webp_prepared **out, char *err, size_t err_len);

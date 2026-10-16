@@ -263,16 +263,23 @@ struct Estimator: Sendable {
                 // the floor at 1440/2560 px differs from the full-size prior, and some photos only reach a high floor
                 // with 4:4:4 (Docs/ENGINE.md §7).
                 bytes = try lane.withReference(v, cancel: cancel) { ref -> Double in
-                    func verify(_ data: Data) throws -> Double {
+                    func verify(_ data: Data, chroma: ChromaSubsampling? = nil) throws -> Double {
                         try cancel.check()
-                        return try lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: cancel)
+                        let (score, width, height, space) = try {
+                            let candidate = try p.decoder.decode(encoded: data)
+                            return (try lane.score(candidate, against: ref, cancel: cancel), candidate.width, candidate.height,
+                                    candidate.colorSpace)
+                        }()
+                        return try constants.decoderGuard.score(score, target: target, chroma: chroma, data: data, width: width,
+                                                                height: height, colorSpace: space, decode: { try $0() },
+                                                                score: { try lane.score($0, against: ref, cancel: cancel) })
                     }
                     let markers = MetadataEditor.jpegMarkers(meta)
                     func jpegSearch() throws -> Double? {
                         let result = try DirectSearch.jpeg(target: target, constants: constants) { d, chroma in
                             let data = try p.jpeg.encode(v, distance: d, subsampling: chroma, tuning: constants.directJPEGTuning,
                                                          markers: markers)
-                            return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
+                            return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data, chroma: chroma), data: data)
                         }
                         if case .encoded(let best) = result.outcome { return Double(best.bytes) }
                         return nil
