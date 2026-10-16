@@ -4,7 +4,8 @@ How the live engine turns a scanned wedding into verified deliveries. `Docs/SPEC
 documents how WP2 implemented it, the constants in use and what was validated. Since the integration pass
 (2026-10-15, branch `int-engine`) it also records the live fits and the search change of Docs/DECISIONS.md D-ENG-3…5.
 Since the engine integration of 2026-10-16 (branch `eng-v3`, D-ENG-11) it also records the speed changes, the tuned
-JPEG tables and the post-pass (§3.5, §8, §10).
+JPEG tables and the post-pass (§3.5, §8, §10). Since D-ENG-12 (branch `eng-highest`) full-size JPEG at fixed floors
+≥ 85 runs in a high-target mode (§3.2).
 
 Code: `Sources/HMBEngine/{Search,Pipeline,Jobs,IO,Metadata,Estimate,Service}`.
 Tests: `Tests/HMBEngineTests/Pipeline` (fakes; live tests gated on `EnginePrimitives.live()` plus `HMB_HOLDOUT` /
@@ -33,6 +34,7 @@ Tests: `Tests/HMBEngineTests/Pipeline` (fakes; live tests gated on `EnginePrimit
 | Codec arenas (libjxl, jpegli working memory) | `CHMBCodecs/arena.cc` | §3.9 |
 | `Estimator`, `LearnedEstimates`, `DeliveryKind` | `Estimate/Estimator.swift` | §3.10 |
 | `JPEGTuning` (table shape per search), `JPEGKnobs`, `TunableJPEGEncoding` | `Search/SearchModel.swift`, `Codecs/JpegliEncoder.swift` | §3.4/§3.5, D-ENG-11 |
+| High-target mode (`MosaicSearch.searchHigh`, `SearchConstants.highMode`, `Targets.highPrior`) | `Search/MosaicSearch.swift`, `Search/SearchModel.swift` | §3.4, D-ENG-12 |
 | `JPEGPostPass` (scan script, lossless rewrite, ±1 zeroing), `WebPTuning` | `Codecs/JPEGPostPass.swift`, `Codecs/LibWebPEncoder.swift` | §3.5, D-ENG-11 |
 | `XMPMinify`, `XMPLayout` | `Metadata/XMPMinify.swift` | §3.7, D-ENG-11 |
 | `Spans` (`HMB_SPANS`, wall time per pipeline span) | `Jobs/Spans.swift` | — |
@@ -118,6 +120,34 @@ full − mosaic bias unchanged at −1.03). The mosaic is encoded with the proxy
 same coefficients as level 2), and the first mosaic encode of each subsampling also picks the per-component AC scan
 script (`JPEGPostPass.chooseScans`) that every full probe of that subsampling is then encoded with — the delivered
 bytes are still exactly the scored bytes (E3).
+
+#### High-target mode (D-ENG-12, `Docs/variants/highest.md`)
+
+Full-size JPEG with a **fixed** floor (High 85, Highest 90; never Balanced, so Couple's Package is unchanged):
+
+```
+mode(T) : T < highCompareFrom (85)                 → tuned search only (everything above)
+          highCompareFrom ≤ T < highFirstFrom (85) → tuned and high mode, smaller verified result (empty by default)
+          T ≥ highFirstFrom (85)                   → high mode; the tuned search only if it reaches nothing
+high    : tables JPEGTuning.highTarget = fullSize shape (chroma × 0.65, tilt 1.6, DC × 0.8), adaptive quantisation OFF,
+          progressive (scan script per subsampling from its own first mosaic encode, as above)
+          4:2:0: the .mosaicExact loop with prior Targets.highPrior(T, 4:2:0) = 0.39·e^{0.164(90−T)},
+                 bias prior −0.3 (highBiasPrior), rescue floor d 0.3 (highDMin)
+          4:4:4: if 4:2:0 reached nothing, or T ≥ high444From (89) and the mosaic does not rule it out:
+                 b = s(best 4:2:0) − m420(d_best); solve the 4:4:4 mosaic for T + exactFirstMargin − b (start d_best·1.28,
+                 steps 0.08, bisection to 0.01, ≤ 8 evaluations); skip when mosaic bytes(4:4:4 there) >
+                 1.03 × mosaic bytes(4:2:0 at d_best) (high444Skip); else the .mosaicExact loop seeded at that point
+                 with bias prior b
+          result: smallest passing probe of both (every probe `highMode`, encoder "jpegli (high)")
+```
+
+Mosaic points are cached per (subsampling, distance) in the pipeline, so the preselection and the searches share
+encodes. Holdout (release, back to back with main 66e3db0): Highest 191,497,771 → 182,337,941 B (−4.78 %, probes 2.26 →
+2.74, 4 photos 4:4:4), High 102,245,961 → 98,776,135 B (−3.39 %, probes 2.00 → 1.74); every file ≥ the floor on ImageIO,
+libjpeg-turbo minimum 89.82 / 84.85 (main 89.81 / 84.88). Annex K tables (`HMB_HIGH_TABLES=annexk`, +3.7 %) and
+baseline coding (`HMB_HIGH_SCAN=baseline`, −8.6 % on ImageIO but every file 89.2–89.8 under libjpeg-turbo) are
+switches, not defaults (D-ENG-12). `HMB_HIGH=off` reproduces main byte for byte; `HMB_HIGH_BAND=<from>,<first>` sets the
+band.
 
 #### `.proxyCurve` (the §3.4 loop)
 
@@ -355,7 +385,7 @@ variants are made first (one sRGB conversion, one resize per size) and the deliv
 
 | Kind | Estimate |
 |---|---|
-| Full-size JPEG | mosaic proxy curve (3 encodes + scores, `JPEGTuning.fullSize`, proxy scan script), mosaic encoded at d* = exp(inv(G)) with the tuning at level 2, × pixel ratio × κ + marker bytes; G = T + exactMargin − exactBiasPrior (= T + 1.13) for `.mosaicExact`, T + M0 − BIAS for `.proxyCurve`; capped at the source size when keep-original would apply |
+| Full-size JPEG | mosaic proxy curve (3 encodes + scores, `JPEGTuning.fullSize`, proxy scan script), mosaic encoded at d* = exp(inv(G)) with the tuning at level 2, × pixel ratio × κ + marker bytes; G = T + exactMargin − exactBiasPrior (= T + 1.13) for `.mosaicExact`, T + M0 − BIAS for `.proxyCurve`; capped at the source size when keep-original would apply. Fixed floors in the high mode (D-ENG-12): the same with `highTarget` at 4:2:0 (and 4:4:4 from `high444From`, the smaller), its prior and bias prior −0.3 (holdout actual / estimate: Highest 1.030, High 1.044) |
 | Full-size WebP | mosaic encoded at qPrior × pixel ratio × κ |
 | Resized (and small full-size) | **the delivery's real DirectSearch on the sample's variant** (WebP with its JPEG fallback and `WebPTuning.default`; JPEG with `JPEGTuning.resized` and the 4:4:4-first rule), best passing bytes × κ (D-ENG-4). The post-pass (scan rewrite, zeroing) is not modelled; live test after D-ENG-11 (holdout, all four, actual / estimate): couple 0.998, website 1.010, social 1.000, archive 1.000 |
 | Archive | 0.78 × JPEG bytes + 1.0 × other bytes, over all photos |

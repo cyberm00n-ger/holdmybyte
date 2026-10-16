@@ -177,6 +177,7 @@ struct PhotoPipeline {
         // Variant "postpass": the AC scan script per subsampling, chosen from the first mosaic encode of that
         // subsampling (MosaicSearch always scores mosaic seeds before its first full probe).
         let scanChoices = Locked([ChromaSubsampling: JPEGScanChoice]())
+        let highScanChoices = Locked([ChromaSubsampling: JPEGScanChoice]())     // the same for the high-target mode
         do {
             search = try Spans.measure("search+slotwait") { try c.lane.withReference(v, cancel: c.cancel) { ref -> SearchResult in
                 func verify(_ data: Data) throws -> Double {
@@ -216,7 +217,43 @@ struct PhotoPipeline {
                                     return try Spans.measure("mosaic.score+wait") { try c.lane.score(decoded, against: mosaicRef, cancel: c.cancel) }
                                 },
                                 probe: jpegProbe(c.constants.jpegTuning))
-                            return try MosaicSearch.search(target: target, oracle: oracle, keepOriginalAllowed: keepAllowed,
+                            // High-target mode (Docs/variants/highest.md; fixed floors only, so Balanced is unchanged):
+                            // its own tables, the same mosaic and reference; its scan scripts are chosen from its own
+                            // first mosaic encode per subsampling.
+                            let tuning = c.constants.highTuning
+                            let useHigh = preset.quality != .balanced && c.constants.highMode(target: target) != .off
+                            // Mosaic results are cached per (subsampling, distance): the 4:4:4 preselection and the
+                            // searches revisit the same points (deterministic, so a cached value is the value).
+                            struct MosaicKey: Hashable { var chroma: ChromaSubsampling; var d: UInt64 }
+                            let mosaicCache = Locked([MosaicKey: (score: Double, bytes: Int)]())
+                            func mosaicPoint(_ d: Double, _ chroma: ChromaSubsampling) throws -> (score: Double, bytes: Int) {
+                                let key = MosaicKey(chroma: chroma, d: d.bitPattern)
+                                if let hit = mosaicCache.snapshot[key] { return hit }
+                                try c.cancel.check()
+                                let data = try Spans.measure("mosaic.encode") {
+                                    try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: chroma, tuning: tuning)
+                                }
+                                if c.constants.optimizeScans, !tuning.sequential, highScanChoices.snapshot[chroma] == nil,
+                                   let choice = try Spans.measure("mosaic.chooseScans", { try p.jpeg.chooseScans(data) }) {
+                                    highScanChoices.withLock { $0[chroma] = choice }
+                                }
+                                let decoded = try Spans.measure("mosaic.decode") { try p.decoder.decode(encoded: data) }
+                                let score = try Spans.measure("mosaic.score+wait") { try c.lane.score(decoded, against: mosaicRef, cancel: c.cancel) }
+                                mosaicCache.withLock { $0[key] = (score, data.count) }
+                                return (score, data.count)
+                            }
+                            let high = !useHigh ? nil : JPEGSearchOracle(
+                                proxyScore: { d, chroma in try mosaicPoint(d, chroma).score },
+                                probe: { d, chroma in
+                                    try c.cancel.check()
+                                    let data = try Spans.measure("probe.encode") {
+                                        try p.jpeg.encode(v, distance: d, subsampling: chroma, tuning: tuning, markers: markers,
+                                                          scans: highScanChoices.snapshot[chroma])
+                                    }
+                                    return ProbeRecord(parameter: d, subsampling: chroma, score: try verify(data), data: data)
+                                },
+                                proxyBytes: { d, chroma in try mosaicPoint(d, chroma).bytes })
+                            return try MosaicSearch.search(target: target, oracle: oracle, high: high, keepOriginalAllowed: keepAllowed,
                                                            sourceBytes: sourceBytes, chromaEnergy: features?.chromaEnergy ?? 0,
                                                            constants: c.constants)
                         }
@@ -289,7 +326,8 @@ struct PhotoPipeline {
             return try write(best.data, ext: ext, photo: photo, plan: plan) { url, bytes in
                 PhotoResult(photo: photo.id, delivery: preset.id, status: .done, score: best.score, target: target,
                             inBytes: photo.byteCount, outBytes: bytes, outRelativePath: url, outPixelWidth: v.width,
-                            outPixelHeight: v.height, encoder: best.subsampling == nil ? "libwebp" : encoderName,
+                            outPixelHeight: v.height,
+                            encoder: best.subsampling == nil ? "libwebp" : best.highMode ? "jpegli (high)" : encoderName,
                             chroma: best.subsampling, probes: search.fullProbes, seconds: lap())
             }
         case .keepOriginal:

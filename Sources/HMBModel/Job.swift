@@ -68,7 +68,7 @@ public struct PhotoResult: Codable, Sendable, Hashable {
     public var outRelativePath: String?      // relative to JobRequest.outputFolder, e.g. "Couple/Finn-und-Lissy-0001.jpg"
     public var outPixelWidth: Int?
     public var outPixelHeight: Int?
-    public var encoder: String?              // "jpegli" | "jpegli (fallback)" | "libwebp" | "libjxl" | "copy"
+    public var encoder: String?              // "jpegli" | "jpegli (high)" | "jpegli (fallback)" | "libwebp" | "libjxl" | "copy"
     public var chroma: ChromaSubsampling?
     public var byteExact: Bool?              // archive only
     public var probes: Int

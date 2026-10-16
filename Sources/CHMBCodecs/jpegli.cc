@@ -219,6 +219,10 @@ int hmb_jpegli_encode_opts(const uint8_t *rgba, uint32_t width, uint32_t height,
     cinfo.image_height = height;
     cinfo.input_components = 4;
     cinfo.in_color_space = JCS_EXT_RGBX;
+    // Standard tables (Annex K, luma + one chroma table, scaled linearly from the distance by jpegli) must be chosen
+    // before the defaults; jpegli's DCT, colour conversion and quantiser are otherwise unchanged.
+    const bool standard = options->standard_tables != 0;
+    if (standard) jpegli_use_standard_quant_tables(&cinfo);
     jpegli_set_defaults(&cinfo);
     cinfo.comp_info[0].h_samp_factor = sampling == 1 ? 1 : 2;
     cinfo.comp_info[0].v_samp_factor = sampling == 0 ? 2 : 1;
@@ -232,6 +236,7 @@ int hmb_jpegli_encode_opts(const uint8_t *rgba, uint32_t width, uint32_t height,
     // ratio takes each table's DC entry from the distance × dc_ratio. jpegli's quantiser reads everything else (zero
     // bias, adaptive quantisation) from the tables. With all ratios at 1 this is exactly jpegli_set_distance.
     const float dc_ratio = options->dc_ratio > 0 ? options->dc_ratio : 1.0f;
+    const int last_table = standard ? 1 : 2;          // the standard tables share one chroma table (Cb and Cr)
     if (chroma_distance != distance || dc_ratio != 1.0f) {
         UINT16 tables[3][DCTSIZE2];
         auto take = [&](float d, int first, int last, bool dc) {
@@ -242,17 +247,17 @@ int hmb_jpegli_encode_opts(const uint8_t *rgba, uint32_t width, uint32_t height,
             }
         };
         take(distance, 0, 0, false);
-        take(chroma_distance, 1, 2, false);
+        take(chroma_distance, 1, last_table, false);
         if (dc_ratio != 1.0f) {
             take(std::min(25.0f, distance * dc_ratio), 0, 0, true);
-            take(std::min(25.0f, chroma_distance * dc_ratio), 1, 2, true);
+            take(std::min(25.0f, chroma_distance * dc_ratio), 1, last_table, true);
         }
         jpegli_set_distance(&cinfo, distance, TRUE);
-        for (int t = 0; t < 3; ++t) std::memcpy(cinfo.quant_tbl_ptrs[t]->quantval, tables[t], sizeof tables[t]);
+        for (int t = 0; t <= last_table; ++t) std::memcpy(cinfo.quant_tbl_ptrs[t]->quantval, tables[t], sizeof tables[t]);
     } else {
         jpegli_set_distance(&cinfo, distance, TRUE);
     }
-    for (int t = 0; t < 3; ++t) {
+    for (int t = 0; t <= last_table; ++t) {
         const float tilt = t == 0 ? options->luma_tilt : options->chroma_tilt;
         if (tilt == 0.0f || cinfo.quant_tbl_ptrs[t] == nullptr) continue;
         for (int k = 1; k < DCTSIZE2; ++k) {          // natural order: row k / 8, column k % 8

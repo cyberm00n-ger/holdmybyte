@@ -70,6 +70,28 @@ public struct SearchConstants: Sendable, Hashable {
     /// rewrites that zero isolated ±1 AC coefficients (bisection over the zigzag start), each re-scored; the
     /// smallest that still reaches the target is delivered. 0 = off.
     public var zeroingAttempts = 4
+
+    /// High-target JPEG mode (Docs/variants/highest.md, Docs/DECISIONS.md D-ENG-12) for full-size JPEG at fixed
+    /// floors (not Balanced): `highTuning`'s tables, 4:2:0 and from `high444From` also 4:4:4. Targets in
+    /// `highCompareFrom..<highFirstFrom` search both this mode and the tuned search and deliver the smaller verified
+    /// result; targets from `highFirstFrom` search this mode first and the tuned search only if it reaches nothing.
+    /// `.infinity` switches either off.
+    public var highTuning = JPEGTuning.highTarget
+    public var highCompareFrom = 85.0
+    public var highFirstFrom = 85.0
+    /// The high mode searches 4:4:4 next to 4:2:0 from this target (below: 4:4:4 only when 4:2:0 fails). Holdout
+    /// frontier, per-photo smaller of the two vs 4:2:0 alone: T 85 0 %, 88 −0.08 %, 90 −1.4 %.
+    public var high444From = 89.0
+    /// …unless the mosaic predicts 4:4:4 more than this fraction larger than the passing 4:2:0 result.
+    public var high444Skip = 0.03
+    /// `.mosaicExact` bias prior (full − mosaic) of the high mode before its first full probe (holdout median −0.2…−0.4).
+    public var highBiasPrior = -0.3
+    /// The high mode's rescue floor (distance).
+    public var highDMin = 0.3
+    public enum HighMode: Sendable { case off, compare, first }
+    public func highMode(target: Double) -> HighMode {
+        target >= highFirstFrom ? .first : target >= highCompareFrom ? .compare : .off
+    }
     public init() {}
     public static let spec = SearchConstants()
 }
@@ -86,10 +108,15 @@ public struct JPEGTuning: Sendable, Hashable {
     public var dcRatio = 1.0
     /// jpegli's adaptive quantisation (jpegli: on).
     public var adaptiveQuantization = true
+    /// Annex K tables scaled from d (`JPEGKnobs.standardTables`; jpegli: its own tables).
+    public var standardTables = false
+    /// Sequential (baseline) instead of progressive (`JPEGKnobs.sequential`).
+    public var sequential = false
     public init(chromaRatio: Double = 1, lumaTilt: Double = 0, chromaTilt: Double = 0, dcRatio: Double = 1,
-                adaptiveQuantization: Bool = true) {
+                adaptiveQuantization: Bool = true, standardTables: Bool = false, sequential: Bool = false) {
         self.chromaRatio = chromaRatio; self.lumaTilt = lumaTilt; self.chromaTilt = chromaTilt; self.dcRatio = dcRatio
         self.adaptiveQuantization = adaptiveQuantization
+        self.standardTables = standardTables; self.sequential = sequential
     }
     /// jpegli's own tables.
     public static let jpegli = JPEGTuning()
@@ -101,6 +128,14 @@ public struct JPEGTuning: Sendable, Hashable {
     /// original's are mostly sensor noise). Holdout frontiers vs jpegli 4:2:0: 1440 px T 74 −5.8 % (4:2:0), T 85
     /// −12.5 % (4:4:4, `direct444From`), 2560 px T 70 −2.9 %, 1024 px T 85 −7.2 % (Docs/variants/search.md).
     public static let resized = JPEGTuning(chromaRatio: 0.7, adaptiveQuantization: false)
+    /// The high-target mode (Docs/variants/highest.md): `fullSize`'s table shape without adaptive quantisation,
+    /// progressive. Holdout (frontier, Highest markers) at T = 90: 4:2:0 184.04 MB, 4:4:4 186.95 MB, the smaller per
+    /// photo 181.46 MB vs the tuned search's 191.50 MB (Annex K at 4:4:4 without AQ: 195.79 MB); T = 85: 4:2:0
+    /// 98.64 MB vs 102.25 MB.
+    public static let highTarget = JPEGTuning(chromaRatio: 0.65, lumaTilt: 1.6, dcRatio: 0.8, adaptiveQuantization: false)
+    /// The research's high-target candidate (Docs/variants/research.md F1) in jpegli: Annex K tables scaled from d, no
+    /// adaptive quantisation (4:4:4). Kept for A/B runs (`HMB_HIGH_TABLES=annexk`).
+    public static let annexK = JPEGTuning(adaptiveQuantization: false, standardTables: true)
     public var isIdentity: Bool { self == .jpegli }
 
     public func knobs(distance d: Double, subsampling: ChromaSubsampling) -> JPEGKnobs {
@@ -109,6 +144,8 @@ public struct JPEGTuning: Sendable, Hashable {
         k.lumaTilt = lumaTilt
         k.chromaTilt = chromaTilt
         k.dcRatio = dcRatio
+        k.standardTables = standardTables
+        k.sequential = sequential
         return k
     }
 }
@@ -132,6 +169,13 @@ public enum Targets {
     /// JPEG distance prior: exp(0.693 + 0.06·(74 − T)) → 74: 2.00, 85: 1.03, 90: 0.77.
     public static func jpegPrior(_ target: Double) -> Double { exp(0.693 + 0.06 * (74 - target)) }
 
+    /// Distance prior of the high-target mode (`JPEGTuning.highTarget`): holdout medians of the distance reaching T
+    /// (frontier, Highest markers) — 4:2:0: 0.39 at 90, 0.89 at 85; 4:4:4: 0.50 at 90, 1.07 at 85
+    /// (Docs/variants/highest.md).
+    public static func highPrior(_ target: Double, chroma: ChromaSubsampling) -> Double {
+        chroma == .s444 ? exp(log(0.50) + 0.152 * (90 - target)) : exp(log(0.39) + 0.164 * (90 - target))
+    }
+
     /// WebP quality prior, fitted on the holdout at 2560 px (median q reaching T: 65 → 72, 70 → 80, 75 → 86, 80 → 90,
     /// 85 → 94; Docs/ENGINE.md §3.1). §3.5's 75 at T = 70 was 5 q too low.
     public static func webpPrior(_ target: Double) -> Double {
@@ -147,6 +191,8 @@ struct ProbeRecord: Sendable {
     var subsampling: ChromaSubsampling?     // JPEG only
     var score: Double
     var data: Data
+    /// Encoded in the high-target mode (`SearchConstants.highTuning`).
+    var highMode = false
     var bytes: Int { data.count }
     func passes(_ target: Double) -> Bool { score >= target }
 }
