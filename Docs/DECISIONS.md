@@ -316,3 +316,30 @@ was −15 % on the holdout with libjpeg-turbo; try it in jpegli (`jpegli_use_sta
 progressive 4:4:4 up to 1.6 lower than baseline; our candidates are always progressive, so ImageIO stays the low
 reading and D-ENG-2 holds for the 4:4:4 Social files). Detecting JPEGmini-marked sources (research rank 3) is a
 product decision.
+
+## D-ENG-12 · 2026-10-16 · Decoder guard (libjpeg-turbo's pixels in process, lower score counts) and a reproducible codec lock (branch `eng-safety`)
+
+**Decision.** (1) `IslowDecoder` (`hmb_jpeg_decode_islow`) decodes a JPEG to exactly libjpeg-turbo's default pixels
+(ISLOW IDCT, fancy upsampling, `jdcolor.c` tables; jpegli reads the coefficients), pixel-identical to `djpeg` on 504
+synthetic encodes and the 6 samples. (2) `SearchConstants.decoderGuard` = `.all` (default): a JPEG candidate that
+passes under ImageIO is also scored on those pixels against the same reference, and the lower score is its score
+(search, post-pass, journal, receipt). Resized searches guard every passing probe; full-size searches guard the
+candidate about to be delivered (next-smallest passing probe if it fails, a fully guarded search if none passes).
+`.chroma444` and `.off` (= eng-v3 byte for byte) stay selectable (`HMB_DECODER_GUARD`). (3) `Scripts/build-codecs.sh`
+normalises the archive's ar member headers (date 0, uid/gid 0, mode 100644), fails on a lock mismatch and installs
+nothing; `--update-lock` is the only way to re-pin. Lock re-pinned 3e81407d → 6e8cf4a9 (same members).
+
+**Why.** Audit of main's outputs (`DecoderAuditTests`, Docs/variants/safety.md §3): libjpeg-turbo (Chrome, Firefox,
+Edge) read 2/19 holdout and 59/535 wedding Social files (4:4:4) below 85 (min −0.153) and 3/535 wedding Couple files
+(4:2:0) below 74 (min −0.015). ImageIO's WebP pixels are libwebp's (19/19 identical). With the guard (`.chroma444`)
+the wedding's Social files are 535/535 ≥ 85 under both decoders at +0.062 % Social bytes; the holdout changed one
+Social file (−0.006 %). The codec lock had depended on the build user's group and umask (eng-v3 verification §5).
+
+**Rejected.** A guard band (+0.16…0.2 on every target, ≈ 2 % of Social's bytes, still no guarantee). Guarding every
+full-size probe (+15 % CPU on the holdout's three-delivery job for no changed byte there). `.chroma444` as default:
+it leaves the 4:2:0 cases of the wedding open.
+
+**Risks accepted.** Viewers that trade accuracy for speed (IFAST, `-nosmooth`, ffmpeg's swscale default) read the
+original itself 2–13 points below the reference and are not certified. Lightroom's and Windows' decoders were not
+measured. The "same" pairing (source and file both decoded by libjpeg-turbo) can stay up to 0.33 below T: that is the
+two decodes of the Lightroom original differing, not the compression.

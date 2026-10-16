@@ -59,16 +59,17 @@ Wedding, 535 photos, main, libjpeg-turbo (in process, mixed pairing):
 
 | Delivery | ImageIO min margin | libjpeg-turbo min / median margin | below | gap min / median / max | same min / below |
 |---|---|---|---|---|---|
-| Couple (4:2:0) | +0.0002 | TBD-WC | TBD | TBD | TBD |
-| Social (4:4:4) | +0.0000 | TBD-WS | TBD | TBD | TBD |
+| Couple (4:2:0) | +0.0002 | **−0.015** / +0.316 | **3** | −0.089 / — / — | −0.199 / 19 |
+| Social (4:4:4) | +0.0000 | **−0.153** / +0.055 | **59** | −0.155 / — / — | −0.330 / 115 |
 
 Readings:
-1. **Couple (jpegli 4:2:0, progressive): ImageIO is the lowest common reading.** libjpeg-turbo (ISLOW or float)
-   reads every file higher (gap ≥ +0.020 on the holdout, TBD on the wedding); D-ENG-2's assumption holds here.
+1. **Couple (jpegli 4:2:0, progressive): ImageIO is almost always the lowest reading, not always.** libjpeg-turbo
+   (ISLOW or float) reads every holdout file higher (gap ≥ +0.020), but on the wedding 3 of 535 Couple files read
+   below 74 (by at most 0.015; gap down to −0.089). D-ENG-2's assumption holds for the median, not for every file.
 2. **Website: ImageIO's WebP pixels are libwebp's** (bit-identical on 19/19), so browsers see exactly the scored
    pixels.
 3. **Social (4:4:4 since D-ENG-11): ImageIO is not the lowest reading.** libjpeg-turbo reads 2 of 19 holdout files
-   below 85 (−0.153) and TBD of 535 wedding files. D-ENG-2's "ImageIO reads lowest" was measured on 4:2:0 and does
+   below 85 (−0.153) and 59 of 535 wedding files (also −0.153). D-ENG-2's "ImageIO reads lowest" was measured on 4:2:0 and does
    not carry over to 4:4:4 (research F4 warned about this). This is the one real gap.
 4. Decoders that trade accuracy for speed (IFAST, box upsampling of chroma, ffmpeg's swscale default) read the
    *original itself* 2–13 points below the reference (floor 87–94); no delivery can be certified against them and the
@@ -103,41 +104,51 @@ component, from the codec arena (returned when the call ends).
   (secant, bias, stop rule), the zeroing post-pass, the journal and the receipt. Failing candidates are not decoded
   twice (the minimum cannot pass either). The ImageIO candidate is released before the second decode, and the second
   decode takes the same decode slot.
-- `.chroma444` (**default**) covers 4:4:4 JPEGs: Social, 4:4:4 fail-open at full size, WebP→JPEG fallbacks at 4:4:4.
-  `.all` adds 4:2:0. `.off` is eng-v3.
+- `.all` (**default**, revised after the wedding audit of §3) covers every JPEG. `.chroma444` covers 4:4:4 JPEGs only
+  (Social, 4:4:4 fail-open at full size, WebP→JPEG fallbacks at 4:4:4). `.off` is eng-v3.
+- **Resized searches** (DirectSearch: Social, fallbacks) guard every passing probe and post-pass rewrite (a second
+  decode of a 1440 px file costs ≈ 0.02 s).
+- **Full-size searches** (MosaicSearch, ~0.4 s per 45 MP second decode) score their probes with ImageIO only; the guard
+  runs on the candidate about to be delivered. If it reads below T under libjpeg-turbo, the next-smallest passing
+  probe is checked the same way; if none passes, the search runs again with every probe guarded. One extra decode
+  and score per full-size file in the common case.
 - The estimator's DirectSearch uses the same rule.
 
-| Holdout, release, lossy three, back to back | Couple | Website | Social | Social min / median | wall | CPU | load |
+Holdout, release, lossy three, back to back. These rows were measured with an earlier form of the guard in which `.all`
+also guarded every passing full-size probe (the full-size final-candidate rule above came after them):
+
+| Holdout | Couple | Website | Social | Social min / median | wall | CPU | load |
 |---|---|---|---|---|---|---|---|
 | main 66e3db0 | 48,365,625 | 5,555,974 | 5,319,707 | 85.0018 / 85.0242 | 12.86 s | 67.9 s | 5.6 → 6.2 |
-| guard `.chroma444` (default) | = (SHA-256) | = (SHA-256) | **5,319,392 (−0.006 %)** | 85.0047 / 85.0242 | 13.84 s | 69.6 s | 6.2 → 7.0 |
-| guard `.all` | = | = | = `.chroma444` (SHA-256) | | 15.12 s | 80.2 s | 7.0 → 8.5 |
+| guard `.chroma444` | = (SHA-256) | = (SHA-256) | **5,319,392 (−0.006 %)** | 85.0047 / 85.0242 | 13.84 s | 69.6 s | 6.2 → 7.0 |
+| guard `.all`, every probe | = | = | = `.chroma444` (SHA-256) | | 15.12 s | 80.2 s | 7.0 → 8.5 |
 | guard `.off` | = main, 57/57 SHA-256 | | | | 12.63 s | 67.0 s | 8.5 → 9.2 |
-| TBD second pair | | | | | | | |
 
-TBD spans.
+A second pair and per-span timings: not measured on this branch (resource limit after the session crash). The
+default `.all` with the final-candidate rule is measured in the integration branch `eng-r2` (Docs/BENCHMARKS.md).
 
 Wedding (535 × 45 MP, Couple + Social, back to back, load 9 → 28 → 63 from other agents):
 
 | | Couple | Social | Social min / median | probes S | wall | CPU |
 |---|---|---|---|---|---|---|
 | main | 1,304,140,132 | 143,125,766 | 85.0000 / 85.0255 | 7.03 | 286.6 s | 1442.8 s |
-| guard (default) | = (535/535 SHA-256) | **143,214,139 (+0.062 %)**, 183 files changed | 85.0000 / 85.0251 | 7.04 | 253.4 s | 1379.4 s |
+| guard `.chroma444` | = (535/535 SHA-256) | **143,214,139 (+0.062 %)**, 183 files changed | 85.0000 / 85.0251 | 7.04 | 253.4 s | 1379.4 s |
 
 The wedding pair ran under load 25–63 (other agents), so its times say nothing; CPU is within noise. Audit of the
-guarded Social files (libjpeg-turbo, mixed): **535/535 ≥ 85, min +0.001** (main: TBD below). Holdout: 19/19, min
+guarded Social files (libjpeg-turbo, mixed): **535/535 ≥ 85, min +0.001** (main: 59 below, min −0.153). Holdout: 19/19, min
 +0.008 (main: 2 below, min −0.153). Same pairing after the guard: 3/19 holdout and 104/535 wedding files below 85 by
 at most 0.05 / 0.33 (source-decode effect, §3 reading 5).
 
-**Why a second decoder and not a guard band.** A band must cover the worst gap seen (Social −0.155 holdout, TBD
+**Why a second decoder and not a guard band.** A band must cover the worst gap seen (Social −0.155 holdout and
 wedding) and still is no guarantee for the next photo; at Social's slope (D-ENG-8: 0.20 points of overshoot = 2.3 %
 of the bytes) +0.16…+0.2 costs about 2 % of Social's bytes on every file, against +0.06 % (wedding) for the guard,
 which only moves the files that need it.
 
-**Why `.chroma444` and not `.all`.** `.all` decodes every passing 4:2:0 full-size probe a second time (0.35–0.45 s per
-45 MP decode + one score) and changed no byte on the holdout or the wedding: libjpeg-turbo reads every jpegli 4:2:0
-file higher than ImageIO (gap ≥ +0.020 on 19, TBD on 535). It costs +15 % CPU on the holdout's three-delivery job.
-It stays available for audits and for an owner who wants the guarantee by construction everywhere.
+**Why `.all` and not `.chroma444`.** The holdout alone suggested `.chroma444`: libjpeg-turbo read every jpegli 4:2:0
+file higher than ImageIO there, and guarding every full-size probe cost +15 % CPU for no changed byte. The wedding
+audit then found 3 of 535 Couple files below 74 under libjpeg-turbo (by ≤ 0.015). Guarding only the delivered
+full-size candidate closes that gap at one extra 45 MP decode and score per file; `.all` with that rule on the wedding
+is not measured (resource limit, no full-wedding runs after the crash).
 
 ## 6. Codec lock reproducibility
 
