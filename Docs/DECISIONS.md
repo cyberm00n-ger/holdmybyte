@@ -208,3 +208,24 @@ Append-only. One short entry each: date, area, the question it answers, the deci
 - **[harness] Fidelity.** `hmbGlass`/`hmbMaterial` fall back to a flat, nearly opaque stand-in with a hairline (a
   material over a photo vanished offscreen); scroll pockets become a fade from the bar's background (rows scrolled
   under the title bar showed through); sheets are captured without the 32 pt title bar an unattached sheet window has.
+
+### Final design review (2026-10-16, `polish-app`)
+
+- **[app] Done seal and issues triangle are solid.** `checkmark.seal.fill` in the accent and
+  `exclamationmark.triangle.fill` in orange use the default (monochrome) rendering, as §2.4 S10/S11 write them; the
+  hierarchical rendering drew a pale seal that read as disabled next to the 26 pt title, and a muddy one in dark.
+- **[app] Issues card edge.** The 3 pt orange leading edge is a plain rectangle clipped by the card's 16 pt continuous
+  shape. A 3 pt-wide rounded shape clamps its radii, so the edge ran straight past the card's rounded corners.
+- **[app] Grid header menus** (delivery picker, sort menu) draw in the label colour, like the toolbar menus (accent is
+  not for menus, §2.5).
+- **[app] Inspector size rows** (§2.4 S14 deviation): `Original 25.7 MB` and `Pixels 9504 × 6336` are two rows. As one
+  value ("25.7 MB · 9504 × 6336") it wrapped under its label at the inspector's 260 pt.
+- **[app] "Last seen at ~/…"** (S12) abbreviates with `AppPlatform.homeDirectory` (the user's home in the app; the
+  fixtures' home in the harness, so the banner shows `~/Weddings/…` as specified instead of `/Users/sebastian/…`).
+- **[harness] Vibrancy by blend, not by a fixed ratio.** Flattened plus-darker / plus-lighter content is drawn black /
+  white at the opacity that gives the blend's own result over the glass stand-in's fill `b`: `(1 − t) / b` and
+  `t / (1 − b)`. The old mapping (primary tint → 88 %) clamped the sidebar's secondary captions (tint 0.502 light,
+  0.486 dark) to solid black / white, so dates and counts were darker than the names above them and the lifetime
+  footer read as primary. SF Symbol `ImageLayer`s and fills drawn with the blend get the same treatment through their
+  `contentsMultiplyColor` / background colour; before, the sidebar's delivery symbols nearly vanished in dark (65 on
+  51).

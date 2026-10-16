@@ -44,7 +44,9 @@ struct PhotoInspector: View {
                 }
             }
             Section("Size") {
-                LabeledContent("Original", value: "\(HMBFormat.bytes(photo.byteCount, locale: locale)) · \(photo.pixelWidth) × \(photo.pixelHeight)")
+                // Size and pixels on their own rows: together they wrapped under the label at the inspector's 260 pt.
+                LabeledContent("Original", value: HMBFormat.bytes(photo.byteCount, locale: locale))
+                LabeledContent("Pixels", value: "\(photo.pixelWidth) × \(photo.pixelHeight)")
                 LabeledContent("Delivered", value: deliveredText)
                 LabeledContent("Saved", value: savedText)
             }

@@ -83,12 +83,12 @@ struct ResultHeader: View {
             if issues > 0 {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(Tokens.Typography.doneSeal)
-                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(Tokens.Palette.warning)
             } else if appeared || skipsAnimation {
+                // Monochrome (§2.4 S10): a solid seal in the accent with the check cut out. Hierarchical drew a pale
+                // seal that read as disabled beside the title (and muddy in dark).
                 Image(systemName: "checkmark.seal.fill")
                     .font(Tokens.Typography.doneSeal)
-                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.tint)
                     .transition(.symbolEffect(.drawOn))
             } else {
@@ -159,10 +159,11 @@ struct IssuesCard: View {
         }
         .cardSurface()
         .overlay(alignment: .leading) {
-            UnevenRoundedRectangle(topLeadingRadius: Tokens.Radius.tile, bottomLeadingRadius: Tokens.Radius.tile, style: .continuous)
-                .fill(Tokens.Palette.warning)
-                .frame(width: 3)
+            // The 3 pt orange leading edge follows the card's corners: a 3 pt-wide rounded shape clamps its radii to
+            // 1.5 pt, so the edge ran straight past the card's rounded corners.
+            Rectangle().fill(Tokens.Palette.warning).frame(width: 3)
         }
+        .clipShape(Tokens.Radius.shape(Tokens.Radius.tile))
     }
 }
 
@@ -217,7 +218,7 @@ struct MissingFolderBanner: View {
 
     var body: some View {
         StatusBanner(symbol: "folder.badge.questionmark", title: Copy.MissingFolder.title,
-                     message: Copy.MissingFolder.message(record.outputFolder)) {
+                     message: Copy.MissingFolder.message(record.outputFolder, home: model.platform.homeDirectory)) {
             Button(Copy.MissingFolder.locate) { model.locateFolder(record.id) }
                 .hmbNeutralButtonTint()
             Button(Copy.MissingFolder.removeFromHistory) { model.requestRemoveFromHistory(record.id) }
@@ -638,6 +639,7 @@ struct GridHeader: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .fixedSize()
+                .hmbMenuLabelTint()                           // the accent is not for menus (§2.5)
             }
             Menu {
                 Picker(selection: $model.state.gridSort) {
@@ -651,6 +653,7 @@ struct GridHeader: View {
             }
             .menuStyle(.button)
             .fixedSize()
+            .hmbMenuLabelTint()
             .help(Copy.Done.sortHelp)
             if presentation.issuePhotoCount > 0 {
                 Toggle(Copy.Done.issuesOnly, isOn: $model.state.issuesOnly).toggleStyle(.checkbox)

@@ -52,6 +52,7 @@ final class SnapshotRenderer {
         var platform = AppPlatform.inert
         let missing = scenario.missingFolders
         platform.fileExists = { !missing.contains($0) }
+        platform.homeDirectory = FixtureFactory.home              // fixture paths live under /Users/sebastian
         model.platform = platform
         model.volumesChanged()
         let appearance = request.appearance.nsAppearance

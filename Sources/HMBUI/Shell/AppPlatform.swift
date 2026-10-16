@@ -41,6 +41,8 @@ public struct AppPlatform {
     public var openSettings: () -> Void
     /// Remembers the sidebar choice (§2.1).
     public var defaults: UserDefaults
+    /// The folder shown as `~` in paths (S12 "Last seen at ~/…"); fixtures set their own.
+    public var homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
 
     public init(chooseItems: @escaping () -> [URL]?, chooseFolder: @escaping (String, URL?) -> URL?,
                 reveal: @escaping ([URL]) -> Void, fileExists: @escaping (URL) -> Bool, isDirectory: @escaping (URL) -> Bool,
