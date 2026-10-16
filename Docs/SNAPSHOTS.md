@@ -58,7 +58,7 @@ composites is not available that way, so before each capture the harness rewrite
 |---|---|---|
 | Liquid Glass (`NSGlassEffectView`: sidebar, toolbar platters) | opaque white, hides its content | a flat stand-in (window background blended 7 % toward the label colour, hairline, same corner radius); the glass's content view moves into it |
 | `CABackdropLayer`, `NSScrollPocket` (blur behind bars, scroll-edge effect) | solid blocks | hidden |
-| Vibrant text and symbols (`CATintedImage` contents, plus-lighter / plus-darker) | not drawn at all | flattened to plain images in the image's own `tint` × the layer's `contentsMultiplyColor`; plus-lighter/darker text at 88 % white (dark) / black (light), secondary proportionally |
+| Vibrant text and symbols (`CATintedImage` contents, plus-lighter / plus-darker) | not drawn at all | flattened to plain images in the image's own `tint` × the layer's `contentsMultiplyColor`; plus-lighter/darker content (text, `ImageLayer` symbols, fills) as white / black at the opacity that reproduces the blend over the glass stand-in's fill `b`: `t / (1 − b)` and `(1 − t) / b` |
 | Glass content moved into the stand-in | constraints to views outside the glass are lost (the search field shrank to a sliver) | frames that changed are pinned back |
 | Inactive window look (offscreen windows are never key) | grey traffic lights, grey default buttons and selection | the harness process reports the app active and every window key and main |
 | Sheets (`.sheet`) | a separate `SheetPresentationWindow` that never attaches to an invisible parent | captured separately and composited centred under the toolbar with a shadow |
@@ -68,8 +68,9 @@ composites is not available that way, so before each capture the harness rewrite
 | Sheet window title bar | an unattached sheet is a titled window: a 32 pt empty band above the sheet | only the sheet's content view is captured |
 | NSAlert default button | the harness is no app bundle, so no `AccentColor` asset: system blue | the default button's `bezelColor` is the accent (the bundle gets it from `NSAccentColorName`) |
 
-Consequences for review: glass surfaces are flat, vibrancy is approximated (sidebar text contrast is close to, not
-exactly, the real one), and there is no desktop behind the window. Layout, copy, typography, symbols, colours and
+Consequences for review: glass surfaces are flat, vibrancy is modelled over the flat stand-in (plus-darker /
+plus-lighter text, symbols and fills drawn at the opacity that gives the blend's result over the stand-in's fill, so
+the sidebar keeps its name / caption / header hierarchy; not blurred like the real material), and there is no desktop behind the window. Layout, copy, typography, symbols, colours and
 accent use are exact. Animations do run offscreen (measured: a 0.6 s ease-out finishes after ≈ 0.7 s), hence the
 0.7 s settle time.
 
@@ -91,6 +92,9 @@ below was not repeated locked; over SSH the process must run in the user's GUI s
 | 2026-10-15 | `int-app` verification, after fixes, release | 92 | 96.9 s | 6.80 17.01 23.66 → 5.29 13.65 21.61 | exit 0, 0 blank; the four defects above fixed (Docs/DECISIONS.md) |
 | 2026-10-15 | `polish-app` baseline, debug | 92 | 141.9 s | 12.59 14.72 14.22 → 13.71 13.44 13.70 | exit 0; reviewed: divider through letterbox/HUD, sidebar row off screen, empty band over Edit Delivery, "75.0" beside "25,7 MB", teal menus |
 | 2026-10-15 | `polish-app` final, release, settle 0.7 s | 92 (42 ids × 2 + 4 × 2) | 107.5 s | 16.02 16.55 16.74 → 11.41 14.59 15.93 (shared machine, builds running) | exit 0, 0 blank (largest one-colour share 92.2 %); every PNG reviewed, light and dark, after three fix rounds (Docs/DECISIONS.md "app polish") |
+| 2026-10-16 | `polish-app` final review, before fixes, release | 92 | 101.2 s | 6.23 8.32 12.99 → 5.27 7.26 11.98 | exit 0; every PNG reviewed (Docs/REVIEW.md): pale hierarchical seal, orange issues edge past the card corners, teal grid menus, inspector size row wrapping, `/Users/sebastian/…` in S12, sidebar captions solid black/white and delivery symbols invisible in dark (harness vibrancy) |
+| 2026-10-16 | `polish-app` final review, after fixes, release | 92 | 101.7 s | 5.61 5.66 8.13 → 5.66 5.61 7.82 | exit 0, 0 blank; the defects above fixed and re-checked in both appearances |
+| 2026-10-16 | curated README set (`Docs/assets/screenshots/`), release, no `HMB_FIXTURE_PHOTOS` | 28 (10 ids) | 32.6 s | 6.61 9.20 9.12 | synthetic thumbnails, so no client photo is committed; downscaled to ≤ 1120 px wide, each < 500 KB |
 
 ## Review checklist (§6.3)
 
@@ -149,8 +153,7 @@ and dark). Defects found and fixed are in the notes and in `Docs/DECISIONS.md`.
 **Known limits of the offscreen renders** (the app is right; verified against a window-server capture):
 - the sidebar search field's text is not drawn (the clear button shows that it has text);
 - glass and materials (Compare HUD, side labels, knob, toasts, score capsules) are a flat stand-in, not blurred glass;
-- the sidebar's running ProgressView ring draws in the label colour, and `.tertiary` delivery symbols are faint in
-  dark;
+- the sidebar's running ProgressView ring draws in the label colour (a white disc with a dark wedge);
 - `.saturation(0)` does not render: queued/working grid cells get a greyscale thumbnail while snapshot rendering.
 - Settings renders the selected tab without its toolbar tab bar (`SettingsView`'s snapshot path skips the `TabView`);
 - the harness's NSAlert default button gets the accent explicitly; the app gets it from the bundle's `AccentColor`.
