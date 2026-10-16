@@ -23,15 +23,16 @@ final class MetricLane: Sendable {
     static let deferredPixels = 3_000_000
     /// How often a waiting worker re-checks its cancellation token.
     static let pollInterval = 0.02
-    let maxLiveReferences: Int
+    /// Full-resolution searches at once (the memory plan sets it per job, `configure`).
+    var maxLiveReferences: Int { slots.limit }
     private let gpu = NSLock()
-    private let slots: DispatchSemaphore
+    private let slots: Gate
     /// Full-resolution decodes at once (D-ENG-10): ImageIO decodes a 45 MP JPEG into a second full-size buffer of
     /// its own (177 MB) before it is copied into ours, and malloc keeps those buffers once freed, so the number that
     /// ever ran at once stays in the footprint. Two keep the decodes off the critical path (~0.8 run at once on
     /// average in a four-delivery job).
     static let largeDecodes = 2
-    private let decodes = DispatchSemaphore(value: MetricLane.largeDecodes)
+    private let decodes: Gate
     private let serialize: Bool
     /// The optional budget shared with archive transcodes (D-ENG-7); full-resolution references reserve from it too.
     let memory: MemoryBudget?
@@ -39,13 +40,20 @@ final class MetricLane: Sendable {
     let deferFullResolution: Bool
 
     init(metric: any PerceptualMetric, maxLiveReferences: Int = 3, serialize: Bool = true, memory: MemoryBudget? = nil,
-         deferFullResolution: Bool = true) {
+         deferFullResolution: Bool = true, largeDecodes: Int = MetricLane.largeDecodes) {
+        self.decodes = Gate(limit: largeDecodes)
         self.metric = metric
         self.deferFullResolution = deferFullResolution
-        self.maxLiveReferences = maxLiveReferences
-        self.slots = DispatchSemaphore(value: maxLiveReferences)
+        self.slots = Gate(limit: maxLiveReferences)
         self.serialize = serialize
         self.memory = memory
+    }
+
+    /// Sets the full-resolution search slots and decode slots for the next job (`MemoryPlan.fullSlots`). Searches
+    /// already holding a slot keep it; a lower limit applies as they finish.
+    func configure(fullSlots: Int, decodes: Int) {
+        slots.setLimit(fullSlots)
+        self.decodes.setLimit(decodes)
     }
 
     /// Runs `body` with the lane held. With a token, the wait polls it; without one (cleanup) it is unconditional.
@@ -54,14 +62,16 @@ final class MetricLane: Sendable {
             try cancel?.check()
             return try body()
         }
-        if let cancel {
-            while !gpu.lock(before: Date(timeIntervalSinceNow: Self.pollInterval)) { try cancel.check() }
-        } else {
-            gpu.lock()
+        try Spans.measure("lane.lockwait") {
+            if let cancel {
+                while !gpu.lock(before: Date(timeIntervalSinceNow: Self.pollInterval)) { try cancel.check() }
+            } else {
+                gpu.lock()
+            }
         }
         defer { gpu.unlock() }
         try cancel?.check()
-        return try body()
+        return try Spans.measure("lane.held") { try body() }
     }
 
     /// Prepares a reference for `image`, runs `body`, and always releases it. Waiting for a slot is cancellable.
@@ -71,9 +81,9 @@ final class MetricLane: Sendable {
         if needsSlot {
             MemoryTrace.enter(.fullWait)
             defer { MemoryTrace.leave(.fullWait) }
-            while slots.wait(timeout: .now() + Self.pollInterval) == .timedOut { try cancel.check() }
+            try Spans.measure("lane.slotwait") { try slots.enter(cancel: cancel) }
         }
-        defer { if needsSlot { slots.signal() } }
+        defer { if needsSlot { slots.leave() } }
         if deferFullResolution, image.pixelCount > Self.deferredPixels {
             return try body(DeferredReference(image))
         }
@@ -90,15 +100,15 @@ final class MetricLane: Sendable {
     /// of the `largeDecodes` slots.
     func decoding<T>(pixels: Int, cancel: CancelToken, _ body: () throws -> T) throws -> T {
         guard pixels > Self.fullResolutionPixels else { return try body() }
-        while decodes.wait(timeout: .now() + Self.pollInterval) == .timedOut { try cancel.check() }
-        defer { decodes.signal() }
+        try Spans.measure("lane.decodewait") { try decodes.enter(cancel: cancel) }
+        defer { decodes.leave() }
         return try body()
     }
 
     func score(_ candidate: PixelImage, against reference: any MetricReference, cancel: CancelToken) throws -> Double {
         try locked(cancel) {
             guard let deferred = reference as? DeferredReference else { return try metric.score(candidate, against: reference) }
-            let prepared = try metric.prepareReference(deferred.image)
+            let prepared = try Spans.measure("lane.deferredprepare") { try metric.prepareReference(deferred.image) }
             defer { metric.release(prepared) }
             return try metric.score(candidate, against: prepared)
         }
@@ -118,5 +128,42 @@ final class MetricLane: Sendable {
         var width: Int { image.width }
         var height: Int { image.height }
         init(_ image: PixelImage) { self.image = image }
+    }
+}
+
+/// A counting gate whose limit can change between jobs (a semaphore's cannot). Waiting is cancellable: the waiter
+/// re-checks its token every `MetricLane.pollInterval`.
+final class Gate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var current: Int
+    private var inUse = 0
+
+    init(limit: Int) { current = max(1, limit) }
+
+    var limit: Int { condition.withLock { current } }
+
+    func setLimit(_ limit: Int) {
+        condition.withLock {
+            current = max(1, limit)
+            condition.broadcast()
+        }
+    }
+
+    func enter(cancel: CancelToken) throws {
+        condition.lock()
+        defer { condition.unlock() }
+        while inUse >= current {
+            try cancel.check()
+            _ = condition.wait(until: Date(timeIntervalSinceNow: MetricLane.pollInterval))
+        }
+        try cancel.check()
+        inUse += 1
+    }
+
+    func leave() {
+        condition.withLock {
+            inUse -= 1
+            condition.signal()
+        }
     }
 }

@@ -246,7 +246,7 @@ struct Estimator: Sendable {
                         for factor in [0.8, 1.0, 1.25] {
                             try cancel.check()
                             let d = Targets.jpegPrior(target) * factor
-                            let data = try p.jpeg.encode(mosaic, distance: d, subsampling: .s420, markers: [])
+                            let data = try p.jpeg.encodeForScoring(mosaic, distance: d, subsampling: .s420)
                             points.append((log(d), try lane.score(try p.decoder.decode(encoded: data), against: ref, cancel: cancel)))
                         }
                         return exp(ProxyCurve(points: points).inverse(Self.mosaicGoal(target: target, constants: constants),

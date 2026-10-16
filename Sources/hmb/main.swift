@@ -35,6 +35,8 @@ func liveEngine() throws -> LiveEngine {
     let workers = environment["HMB_WORKERS"].flatMap(Int.init).map { min(64, max(1, $0)) }
     var options = EngineOptions(workerCount: workers)
     if let budget = environment["HMB_MEMORY_BUDGET"].flatMap(Int64.init), budget > 0 { options.memoryBudget = budget }
+    if let slots = environment["HMB_FULL_SLOTS"].flatMap(Int.init), slots > 0 { options.maxLiveReferences = slots }
+    if let decodes = environment["HMB_DECODE_SLOTS"].flatMap(Int.init), decodes > 0 { options.largeDecodes = decodes }
     if let lanes = environment["HMB_ARCHIVE_LANES"].flatMap(Int.init), lanes > 0 { options.archiveConcurrency = lanes }
     return LiveEngine(primitives: try .live(), supportDirectory: support, options: options)
 }

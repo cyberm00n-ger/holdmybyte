@@ -197,6 +197,8 @@ final class JobRunner: @unchecked Sendable {
                                     largestPixels: scope.filter { todo[$0.id.index] != nil }.map { $0.pixelWidth * $0.pixelHeight }.max() ?? 0,
                                     archive: !archiveItems.isEmpty, lossy: !lossyItems.isEmpty)
         Self.log.info("memory plan: \(memoryPlan.description, privacy: .public)")
+        lane.configure(fullSlots: memoryPlan.fullSlots,
+                       decodes: options.largeDecodes ?? max(MetricLane.largeDecodes, memoryPlan.fullSlots))
         let workers = memoryPlan.workers
         let state = Locked(RunState(rate: PhotoRate(start: started, parallelism: workers)))
         state.withLock { s in

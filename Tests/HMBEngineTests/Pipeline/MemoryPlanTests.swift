@@ -20,10 +20,28 @@ import Testing
     @Test func fourDeliveriesOnTheWeddingFitEightGigabytes() {
         let p = plan()
         #expect(p.budget == 8_000_000_000)
-        #expect(p.workers == 7 && p.archiveLanes == 3, "\(p)")
+        // Since the candidate is decoded into ImageIO's own buffer a full-size search is modelled at 5 B/px: eight
+        // workers fit with the minimum three full-size slots, not with a slot for each of the five lossy workers.
+        #expect(p.workers == 8 && p.archiveLanes == 3 && p.fullSlots == 3, "\(p)")
         #expect(p.plannedPeak <= p.budget)
-        // Eight workers with three lanes would not fit the model.
-        #expect(MemoryPlan.peak(archives: 3, lossy: 5, pools: true, fullSlots: 3, pixels: Int64(Self.wedding)) > p.budget)
+        #expect(MemoryPlan.peak(archives: 3, lossy: 5, pools: true, fullSlots: 4, pixels: Int64(Self.wedding)) > p.budget)
+    }
+
+    @Test func lossyOnlyJobsGiveEveryWorkerAFullSizeSlot() {
+        let p = plan(archive: false)
+        #expect(p.workers == 8 && p.fullSlots == 8, "\(p)")
+        #expect(p.plannedPeak <= p.budget)
+        // A smaller Mac keeps the workers and gives up slots first (never below three).
+        let small = plan(archive: false, memory: 8 * Self.gb)
+        #expect(small.fullSlots >= MemoryPlan.minimumFullSlots && small.fullSlots < 8, "\(small)")
+        #expect(small.plannedPeak <= small.budget || small.workers == 1, "\(small)")
+    }
+
+    @Test func anExplicitSlotCountIsTakenAsGiven() {
+        var options = EngineOptions()
+        options.maxLiveReferences = 2
+        let p = plan(archive: false, options: options)
+        #expect(p.fullSlots == 2 && p.workers == 8, "\(p)")
     }
 
     @Test func smallerPhotosKeepEveryWorker() {

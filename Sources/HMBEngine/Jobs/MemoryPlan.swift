@@ -10,8 +10,12 @@
 //   pools        32 B/px     the metric's pooled full-size working set and reference pyramid (one each, D-ENG-10)
 //   archive      30 B/px     one libjxl transcode + verification (1.35 GB at 45 MP)
 //   lossyWorker   6 B/px     decoded source plus resized variants and their probes
-//   fullSearch    6 B/px     candidate decode + jpegli coefficients of a full-size probe (≤ 3 at once, MetricLane)
+//   fullSearch    5 B/px     candidate decode + jpegli coefficients of a full-size probe (MetricLane slots); 6 B/px
+//                            until the candidate was decoded straight into ImageIO's own buffer (speed variant)
 //
+// Full-size search slots (speed variant): every lossy worker may search at once while the model fits; otherwise the
+// slots go down to `minimumFullSlots` (the earlier fixed 3) before a worker is dropped. With the fixed 3, a
+// Couple's Package job ran 3 searches on 8 workers and left most cores idle (holdout: 2.4 of 10 busy).
 // The budget is the §3.9 8 GB, but at most half the Mac's memory. In a job with both kinds, archives get ~3/8 of the
 // workers (they are ~40 % of a four-delivery job's CPU time); an archive-only job has no metric pools and gives every
 // worker to archives; workers are dropped until the model fits the budget. Admission (WorkerPool): archives up to
@@ -31,7 +35,9 @@ struct MemoryPlan: Sendable, CustomStringConvertible {
     static let poolBytesPerPixel: Int64 = 32
     static let archiveBytesPerPixel: Int64 = 30
     static let lossyBytesPerPixel: Int64 = 6
-    static let fullSearchBytesPerPixel: Int64 = 6
+    static let fullSearchBytesPerPixel: Int64 = 5
+    /// Fewest full-size search slots the plan gives a job with lossy work (the pre-speed fixed value).
+    static let minimumFullSlots = 3
 
     var budget: Int64
     var hasArchive: Bool
@@ -48,11 +54,12 @@ struct MemoryPlan: Sendable, CustomStringConvertible {
     ///   - largestPixels: pixel count of the largest photo of the job.
     init(options: EngineOptions, workers: Int, largestPixels: Int, archive: Bool, lossy: Bool,
          physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) {
-        pixels = Int64(max(largestPixels, 1))
+        let px = Int64(max(largestPixels, 1))
+        pixels = px
         hasArchive = archive
         hasLossy = lossy
-        fullSlots = max(1, options.maxLiveReferences)
-        budget = min(Self.specBudget, Int64(min(physicalMemory / 2, UInt64(Int64.max))))
+        let budget = min(Self.specBudget, Int64(min(physicalMemory / 2, UInt64(Int64.max))))
+        self.budget = budget
         var w = max(1, workers)
         func lanes(_ w: Int) -> Int {
             guard archive else { return 0 }
@@ -60,13 +67,23 @@ struct MemoryPlan: Sendable, CustomStringConvertible {
             if let fixed = options.archiveConcurrency { return min(w, max(1, fixed)) }
             return max(1, Int((Double(w) * 3 / 8).rounded()))
         }
-        // Drop workers until the model fits (never below one worker); an explicit lane count is a tuning run: as given.
-        while options.archiveConcurrency == nil, w > 1, Self.peak(archives: lanes(w), lossy: w - lanes(w), pools: lossy, fullSlots: fullSlots,
-                               pixels: pixels) > budget {
+        // Slots: every lossy worker, or as given. Then fewer slots (down to the minimum), then fewer workers, until
+        // the model fits (never below one worker); an explicit lane count is a tuning run: workers as given.
+        var slots = options.maxLiveReferences.map { max(1, $0) } ?? max(Self.minimumFullSlots, w - lanes(w))
+        func fits() -> Bool {
+            Self.peak(archives: lanes(w), lossy: w - lanes(w), pools: lossy, fullSlots: slots, pixels: px) <= budget
+        }
+        while !fits() {
+            if options.maxLiveReferences == nil, slots > Self.minimumFullSlots {
+                slots -= 1
+                continue
+            }
+            guard options.archiveConcurrency == nil, w > 1 else { break }
             w -= 1
         }
         self.workers = w
         archiveLanes = lanes(w)
+        fullSlots = slots
     }
 
     /// The model's peak for the given running items.
@@ -93,7 +110,7 @@ struct MemoryPlan: Sendable, CustomStringConvertible {
     }
 
     var description: String {
-        String(format: "%d workers, %d archive lanes, planned peak %.2f GB of %.2f GB (%.1f MP)", workers, archiveLanes,
+        String(format: "%d workers, %d archive lanes, %d full-size slots, planned peak %.2f GB of %.2f GB (%.1f MP)", workers, archiveLanes, fullSlots,
                Double(plannedPeak) / 1e9, Double(budget) / 1e9, Double(pixels) / 1e6)
     }
 }

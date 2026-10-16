@@ -12,6 +12,20 @@ public struct JpegliEncoder: JPEGEncoding {
 
     public func encode(_ image: PixelImage, distance: Double, subsampling: ChromaSubsampling,
                        markers: [JPEGMarker]) throws -> Data {
+        try encode(image, distance: distance, subsampling: subsampling, markers: markers, level: progressiveLevel)
+    }
+
+    /// Level 2's coefficients in the minimal progressive scan script (`HMB_JPEGLI_SCAN_PROXY`: 4 scans instead of
+    /// 15): about half the tokenisation and a faster ImageIO decode, and ImageIO's progressive decoder produces the
+    /// same pixels from the same coefficients whatever the scan script (`ScanScriptEquivalenceTests`). Used for the
+    /// search mosaic, whose bytes are never delivered; only its score matters.
+    public func encodeForScoring(_ image: PixelImage, distance: Double, subsampling: ChromaSubsampling) throws -> Data {
+        guard progressiveLevel == 2 else { return try encode(image, distance: distance, subsampling: subsampling, markers: []) }
+        return try encode(image, distance: distance, subsampling: subsampling, markers: [], level: HMB_JPEGLI_SCAN_PROXY)
+    }
+
+    func encode(_ image: PixelImage, distance: Double, subsampling: ChromaSubsampling,
+                markers: [JPEGMarker], level: Int32) throws -> Data {
         guard distance.isFinite, (0...25).contains(distance) else { throw PrimitiveError("jpegli: invalid distance \(distance)") }
         // All payloads in one contiguous array, so a single pointer stays valid for the whole C call.
         var storage = [UInt8]()
@@ -29,7 +43,7 @@ public struct JpegliEncoder: JPEGEncoding {
             return try cMarkers.withUnsafeBufferPointer { cMarkers in
                 try CodecBridge.call("jpegli encode") { out, err, errLen in
                     hmb_jpegli_encode(image.bytes, UInt32(image.width), UInt32(image.height), image.bytesPerRow,
-                                      Float(distance), subsampling == .s444 ? 1 : 0, progressiveLevel,
+                                      Float(distance), subsampling == .s444 ? 1 : 0, level,
                                       cMarkers.baseAddress, cMarkers.count, out, err, errLen)
                 }
             }
